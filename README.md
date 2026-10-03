@@ -39,17 +39,17 @@ A network packet analysis tool designed to capture, inspect, and analyze network
 Python 3.11 — the only programming language in the project. Every file (.py) is Python.
 
 Frameworks & Libraries
-Category	Name	What it does
-Web UI Framework	Streamlit	Powers the entire dashboard — panes, sidebar, tour, refresh loop
-Packet Capture Framework	Scapy	Reads real network packets (used in capture.py)
-Charting Framework	Plotly (plotly.graph_objects, plotly.express)	Every chart: bar, line, gauge, timeline, heatmap, throughput, flow
-Data Framework	Pandas	Packet tables, threat scorecard, CSV export
-Testing Framework	Pytest	All 20+ unit tests
-AI SDK	Google Antigravity SDK	Gemini-powered alert explanations and the autonomous SOC agent
-Concurrency	Python stdlib threading, asyncio	Simulator thread, agent thread, packet buffer lock, async SDK calls
-Serialization	Python stdlib json	Alert export, agent decision log
-Date/Time	Python stdlib datetime	Timestamps for packets and decisions
-
+| Category | Technology / Library | What it does |
+| :--- | :--- | :--- |
+| **Web UI Framework** | **Streamlit** | Powers the entire dashboard — panes, sidebar, tour, and refresh loop. |
+| **Packet Capture** | **Scapy** | Reads real network packets (utilized in `capture.py`). |
+| **Charting Framework** | **Plotly** (`plotly.graph_objects`, `plotly.express`) | Renders dynamic charts: bar, line, gauge, timeline, heatmap, throughput, and flow. |
+| **Data Framework** | **Pandas** | Manages packet tables, threat scorecards, and CSV exports. |
+| **Testing Framework** | **Pytest** | Executes all 20+ unit tests. |
+| **AI SDK** | **Google Antigravity SDK** | Powers Gemini-driven alert explanations and the autonomous SOC agent. |
+| **Concurrency** | **Python Stdlib** (`threading`, `asyncio`) | Handles simulator threads, agent threads, packet buffer locks, and async SDK calls. |
+| **Serialization** | **Python Stdlib** (`json`) | Manages alert exports and agent decision logs. |
+| **Date/Time** | **Python Stdlib** (`datetime`) | Generates timestamps for packets and decisions. |
 - **Environment:** Developed using Antigravity
 
 ---
