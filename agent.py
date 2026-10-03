@@ -6,7 +6,13 @@ import urllib.request
 import pathlib
 from datetime import datetime
 from collections import deque
-from google.antigravity import Agent, LocalAgentConfig
+try:
+    from google.antigravity import Agent, LocalAgentConfig
+    _SDK_AVAILABLE = True
+except ImportError:
+    Agent = None
+    LocalAgentConfig = None
+    _SDK_AVAILABLE = False
 
 WEBHOOK_URL = os.environ.get("SOC_WEBHOOK_URL", "")
 MEMORY_FILE = pathlib.Path("agent_memory.jsonl")
@@ -339,6 +345,9 @@ def start_agent(buffer, detector, poll_interval: float = 4.0) -> threading.Threa
 # call for a specific alert's source IP.
 def _agent_loop(buffer, detector, poll_interval):
     """The autonomous agent's main loop. Never touches Streamlit."""
+    if not _SDK_AVAILABLE:
+        AGENT.set_state("IDLE", "Agent offline (SDK unavailable)")
+        return
     seen_alert_count = 0
 
     AGENT.set_state("MONITORING", "Watching traffic for anomalies…")
@@ -429,6 +438,8 @@ def _ask_tier(system: str, context: dict) -> dict:
     Returns the parsed JSON response.
     Falls back to a default "ignore"/"dismiss" on error.
     """
+    if not _SDK_AVAILABLE:
+        return {"action": "ignore", "escalate": False, "reason": "SDK unavailable", "confidence": 0, "self_critique": ""}
     import asyncio, json as _json
 
     prompt = (
@@ -465,6 +476,8 @@ def _ask_tier(system: str, context: dict) -> dict:
 
 def answer_analyst_question(question: str) -> str:
     """Answer a question using the agent's recent decision log."""
+    if not _SDK_AVAILABLE:
+        return "(agent unavailable in this environment)"
     import asyncio
 
     log = AGENT.snapshot_log()[-20:]

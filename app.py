@@ -865,6 +865,8 @@ def render_pixel_agent(agent_state: str, current_task: str) -> str:
 
 def _explain_type(alert_type: str) -> str:
     """Blocking call: explain an attack type. Two sentences max."""
+    if not _SDK_AVAILABLE:
+        return "(AI explanations require the Google Antigravity SDK)"
     prompt = (
         f"Explain the network security attack '{alert_type}' in 2 "
         f"short sentences for a non-technical audience. Say what it "
@@ -894,6 +896,8 @@ ALERT_TYPES = [
 ]
 
 def _prewarm_explanations():
+    if not _SDK_AVAILABLE:
+        return
     for t in ALERT_TYPES:
         try:
             if t not in st.session_state.type_explanations:
