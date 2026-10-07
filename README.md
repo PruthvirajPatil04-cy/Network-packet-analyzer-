@@ -1,26 +1,4 @@
-# Network Packet Analyzer
 
-Setup:
-```bash
-pip install -r requirements.txt
-```
-
-## Quick health check
-```bash
-python scratch/smoke.py
-```
-How to use it:
-Create a file named README.md in the root folder of your local project directory (D:\MINDCRAFT\packet-analyzer\).
-
-Paste the content below into that file and save it.
-
-Commit and push it to your GitHub:
-
-Bash
-git add README.md
-git commit -m "Add README.md"
-git push origin main
-Markdown
 # 🛡️ Network Packet Analyzer
 
 A network packet analysis tool designed to capture, inspect, and analyze network traffic for monitoring, security assessment, and troubleshooting purposes.
