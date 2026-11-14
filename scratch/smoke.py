@@ -1,7 +1,9 @@
-import sys, pathlib
-sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
-import capture
-import detector
-import simulator
+import app
+import time
 
-print("OK")
+app.start_agent_once()
+app.start_simulator_once()
+print("Running...", flush=True)
+
+for _ in range(60):
+    time.sleep(1)

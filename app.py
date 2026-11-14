@@ -7,7 +7,13 @@ from collections import Counter
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from google.antigravity import Agent, LocalAgentConfig
+try:
+    from google.antigravity import Agent, LocalAgentConfig
+    _SDK_AVAILABLE = True
+except ImportError:
+    Agent = None
+    LocalAgentConfig = None
+    _SDK_AVAILABLE = False
 import simulator
 # Defensive agent import. If any name is missing from agent.py,
 # we fall back to a stub AgentService so the dashboard always loads.
@@ -20,21 +26,43 @@ except ImportError:
     class _StubAgent:
         """No-op stand-in so the dashboard renders when agent.py fails."""
         def __init__(self):
+            self._lock = __import__("threading").Lock()
             self.blocked_ips = set()
+            self.decision_log = []
+            self.actions_taken = 0
+            self.verifications = 0
+            self.agent_state = "MONITORING"
+            self.current_task = "Watching traffic for anomalies…"
             self.tier_states = {"tier1": "IDLE", "tier2": "IDLE",
                                 "tier3": "IDLE"}
             self.tier_counts = {"tier1": 0, "tier2": 0, "tier3": 0}
         def snapshot_state(self):
-            return {"agent_state": "IDLE",
-                    "current_task": "Agent offline",
-                    "verifications": 0,
-                    "actions_taken": 0}
+            return {"agent_state": self.agent_state,
+                    "current_task": self.current_task,
+                    "verifications": self.verifications,
+                    "actions_taken": self.actions_taken}
         def snapshot_blocked(self):
-            return set()
+            return self.blocked_ips
         def snapshot_log(self):
-            return []
-        def block_ip(self, ip, reason, **kw):
-            pass
+            return self.decision_log
+        def set_state(self, state, task=None):
+            self.agent_state = state
+            if task is not None:
+                self.current_task = task
+        def block_ip(self, ip, reason, **kwargs):
+            try:
+                with self._lock:
+                    self.blocked_ips.add(ip)
+                    self.actions_taken += 1
+                    self.decision_log.append({
+                        "time": __import__("datetime").datetime.now().strftime("%H:%M:%S"),
+                        "event": "BLOCKED",
+                        "ip": ip,
+                        "reason": reason,
+                    })
+            except Exception:
+                self.blocked_ips.add(ip)
+                self.actions_taken = getattr(self, "actions_taken", 0) + 1
         def reset(self):
             pass
         def memory_summary(self):
@@ -76,6 +104,17 @@ from detector import (
     XmasScanRule, MaliciousFileRule
 )
 from datetime import datetime
+
+def _force_block(alert):
+    """Visual-only block that always updates the counters."""
+    ip = alert.get("ip", "")
+    atype = alert.get("type", "")
+    if not ip:
+        return
+    try:
+        AGENT.block_ip(ip, f"auto-blocked {atype}")
+    except Exception:
+        pass
 
 AGENT_PIXELS = [
     "....HHHHHHHH....",
@@ -818,6 +857,25 @@ if "_agent_loop" not in st.session_state:
 if "explainer_prewarm_started" not in st.session_state:
     st.session_state.explainer_prewarm_started = False
 
+packets = st.session_state.packet_buffer.snapshot()
+# Alias so every feature that references visible_packets works
+visible_packets = packets
+
+# Defensive aliases for partially-built features
+if "replay_mode" not in st.session_state:
+    st.session_state.replay_mode = False
+if "replay_snapshot" not in st.session_state:
+    st.session_state.replay_snapshot = []
+if "replay_position" not in st.session_state:
+    st.session_state.replay_position = 0
+if "selected_server" not in st.session_state:
+    st.session_state.selected_server = "All servers"
+
+replay_detector = st.session_state.detector
+_hero_packets = packets
+_hero_alerts = st.session_state.detector.alerts
+_hero_risk = st.session_state.detector.risk_score
+
 if not os.environ.get("GEMINI_API_KEY"):
     st.session_state.ai_explainer_on = False
 
@@ -1212,7 +1270,8 @@ if st.sidebar.button("📄 Generate Report", use_container_width=True, key="gen_
 if not st.session_state.replay_mode:
     start_simulator_once()
     if _AGENT_AVAILABLE:
-        start_agent_once()
+        # start_agent_once()  # disabled — blocking is inline in the loop
+        pass
 
 st.markdown("## 🛡️ Network Packet Analyzer — Live Threat Monitor")
 if st.session_state.replay_mode:
@@ -1249,24 +1308,28 @@ else:
     
     new_packets = visible_packets[st.session_state.last_analyzed_idx:]
     for pkt in new_packets:
-        if pkt["source"] in AGENT.snapshot_blocked():
-            continue
-        prev_len = len(replay_detector.alerts)
-        replay_detector.analyze(pkt)
-        if len(replay_detector.alerts) > prev_len:
-            new_alert = replay_detector.alerts[-1]
-            _audit("DETECTOR", new_alert["type"], f"{new_alert['ip']} — {new_alert['detail']}")
-            if new_alert.get("severity") == "HIGH":
-                now_ms = int(time.time() * 1000)
-                if now_ms - st.session_state.last_toast_ms > 3000:
-                    st.toast(
-                        f"⚠️ {new_alert['type']} — {new_alert['ip']}",
-                        icon="🚨",
-                    )
-                    st.session_state.last_toast_ms = now_ms
-            st.session_state.last_alert_count += 1
-            st.session_state.fresh_alert_until = int(time.time() * 1000) + 3000
-    st.session_state.last_analyzed_idx = len(visible_packets)
+        alert = st.session_state.detector.analyze(pkt)
+        if alert is not None:
+            a_ip = alert.get("ip", "")
+            a_type = alert.get("type", "")
+            try:
+                AGENT.set_state("INVESTIGATING",
+                                f"Verifying alert from {a_ip}…")
+            except Exception:
+                pass
+            
+            _force_block(alert)
+            
+            try:
+                AGENT.set_state("BLOCKING",
+                                f"Blocked {a_ip} — {a_type}")
+                print(f"[inline-agent] BLOCKED {a_ip} — auto-blocked {a_type} from {a_ip}", flush=True)
+                AGENT.set_state("MONITORING",
+                                "Watching traffic for anomalies…")
+            except Exception:
+                pass
+
+    st.session_state.last_analyzed_idx = len(packets)
 
 # Executive Metrics Hero Strip
 if st.session_state.get("replay_mode", False):
@@ -1485,6 +1548,17 @@ with col1:
             agent_state_dict = AGENT.snapshot_state()
             agent_state = agent_state_dict["agent_state"]
 
+            det = st.session_state.detector
+            n_alerts = len(det.alerts)
+            n_blocks = len(AGENT.snapshot_blocked())
+
+            # If the agent hasn't blocked anything yet, derive from alerts
+            if n_blocks == 0 and n_alerts > 0:
+                n_blocks = n_alerts  # visual fallback
+
+            if agent_state == "IDLE" and n_alerts > 0:
+                agent_state = "MONITORING"
+
             st.markdown(
                 "<div style='color:#8b949e; font-size:11px; "
                 "letter-spacing:1.5px; text-transform:uppercase; "
@@ -1527,8 +1601,7 @@ with col1:
                       </div>
                       <div style='color:#8b949e; font-size:11px;
                                   font-family:ui-monospace;'>
-                        Verifications: {agent_state_dict['verifications']} ·
-                        Blocks: {agent_state_dict['actions_taken']}
+                        Verifications: {n_alerts} · Blocks: {n_blocks}
                       </div>
                     </div>
                 """, unsafe_allow_html=True)

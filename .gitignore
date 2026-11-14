@@ -20,6 +20,7 @@ agent_memory.jsonl
 .DS_Store
 Thumbs.db
 
-# IDE
-.vscode/
-.idea/
+# Logs & Scratch outputs
+*.log
+lt_output.txt
+test_det.py

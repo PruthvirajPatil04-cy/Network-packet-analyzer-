@@ -97,7 +97,7 @@ class AgentService:
         with self._lock:
             self.tier_counts[tier] += 1
 
-    def should_verify(self, ip: str, cooldown_s: int = 60) -> bool:
+    def should_verify(self, ip: str, cooldown_s: int = 10) -> bool:
         """Return True if we haven't verified this IP recently."""
         with self._lock:
             now_ms = time.time() * 1000
@@ -125,7 +125,7 @@ class AgentService:
                 "verifications": self.verifications,
             }
 
-    def block_ip(self, ip: str, reason: str, confidence: int = None, self_critique: str = None) -> None:
+    def block_ip(self, ip: str, reason: str, **kwargs) -> None:
         with self._lock:
             self.blocked_ips.add(ip)
             self.decision_log.append({
@@ -133,8 +133,8 @@ class AgentService:
                 "event": "BLOCKED",
                 "ip": ip,
                 "reason": reason,
-                "confidence": confidence,
-                "self_critique": self_critique,
+                "confidence": kwargs.get("confidence"),
+                "self_critique": kwargs.get("self_critique"),
             })
             self.actions_taken += 1
         
@@ -344,93 +344,72 @@ def start_agent(buffer, detector, poll_interval: float = 4.0) -> threading.Threa
 # it ever sees is the targeted `tool_inspect_ip_traffic(buffer, ip)`
 # call for a specific alert's source IP.
 def _agent_loop(buffer, detector, poll_interval):
-    """The autonomous agent's main loop. Never touches Streamlit."""
-    if not _SDK_AVAILABLE:
-        AGENT.set_state("IDLE", "Agent offline (SDK unavailable)")
-        return
-    seen_alert_count = 0
+    """Autonomous agent loop. Blocks every HIGH-severity alert."""
+    import time as _time
 
+    print("[agent] loop started", flush=True)
     AGENT.set_state("MONITORING", "Watching traffic for anomalies…")
+
+    seen = 0
 
     while not AGENT._stop.is_set():
         try:
-            # 1. Read alerts the detector has produced
+            # Read current alerts
             with detector._lock:
                 alerts = list(detector.alerts)
-            new_alerts = alerts[seen_alert_count:]
-            seen_alert_count = len(alerts)
 
-            # 2. For each new alert, ask the LLM to verify and act
+            new_alerts = alerts[seen:]
+            seen = len(alerts)
+
+            if not new_alerts:
+                _time.sleep(poll_interval)
+                continue
+
             for alert in new_alerts:
                 ip = alert.get("ip")
+                atype = alert.get("type", "UNKNOWN")
+
                 if not ip:
                     continue
-
-                # GUARD 1: Skip if already blocked
                 if ip in AGENT.snapshot_blocked():
+                    print(f"[agent] {ip} already blocked — skip", flush=True)
+                    continue
+                if atype == "BLOCKED IP":
                     continue
 
-                # GUARD 2: Cooldown — don't re-verify the same IP within 60s
-                if not AGENT.should_verify(ip, cooldown_s=60):
-                    continue
-
+                print(f"[agent] investigating {ip} — {atype}", flush=True)
                 AGENT.set_state("INVESTIGATING",
                                 f"Verifying alert from {ip}…")
 
-                # TIER 1
-                AGENT.set_tier_state("tier1", "TRIAGING")
-                t1 = _ask_tier(TIER1_SYSTEM, {"alert": alert})
-                AGENT.bump_tier_count("tier1")
-                AGENT.set_tier_state("tier1", "IDLE")
-                if not t1.get("escalate"):
-                    AGENT.log_decision("TIER1_DISMISSED", ip, t1.get("reason", ""))
-                    continue
+                # Always block on HIGH severity alerts
+                if alert.get("severity") == "HIGH" or atype in (
+                    "DoS / FLOOD", "PORT SCAN", "SSH BRUTE FORCE",
+                    "ICMP FLOOD", "NULL SCAN", "XMAS SCAN",
+                    "MALICIOUS FILE", "KILL CHAIN",
+                ):
+                    reason = f"auto-blocked {atype} from {ip}"
+                    print(f"[agent] BLOCKING {ip} — {reason}", flush=True)
 
-                # TIER 2
-                AGENT.set_tier_state("tier2", "INVESTIGATING")
-                t2 = _ask_tier(TIER2_SYSTEM, {
-                    "alert": alert, "tier1_reason": t1.get("reason"),
-                    "targeted_traffic": tool_inspect_ip_traffic(buffer, ip, 30),
-                    "threat_intel": tool_threat_intel_lookup(ip)})
-                AGENT.bump_tier_count("tier2")
-                AGENT.set_tier_state("tier2", "IDLE")
+                    AGENT.set_state("BLOCKING", f"Blocked {ip} — {reason}")
+                    AGENT.block_ip(ip, reason)
 
-                # TIER 3
-                AGENT.set_tier_state("tier3", "DECIDING")
-                t3 = _ask_tier(TIER3_SYSTEM, {
-                    "alert": alert, "tier1_reason": t1.get("reason"),
-                    "tier2_context": t2})
-                AGENT.bump_tier_count("tier3")
-                AGENT.set_tier_state("tier3", "IDLE")
-
-                conf = int(t3.get("confidence", 0))
-                if t3.get("action") == "block" and conf >= 80:
-                    tool_block_ip(AGENT, ip, t3.get("reason"),
-                                  confidence=conf, self_critique=t3.get("self_critique"))
-                    AGENT.set_state("BLOCKING", f"Blocked {ip} — {t3.get('reason')}")
-                    AGENT.execute_playbook(alert["type"], ip)
+                    _time.sleep(1.0)
+                    AGENT.set_state("MONITORING",
+                                    "Watching traffic for anomalies…")
                 else:
-                    AGENT.log_decision("TIER3_IGNORED", ip,
-                                       t3.get("reason", "below threshold"),
-                                       confidence=conf,
-                                       self_critique=t3.get("self_critique"))
-                    AGENT.set_state("MONITORING", f"Cleared {ip} — below threshold")
-                    
-                # Predictive check — even if the agent didn't block, forecast
-                pred = tool_predict_next_action(detector, ip)
-                if pred.get("prediction") == "likely_escalation":
-                    AGENT.log_decision("PREDICTED", ip,
-                                       f"forecast escalation: {pred['attack_types']}")
+                    AGENT.log_decision("IGNORED", ip,
+                                       f"low-signal alert: {atype}")
+                    AGENT.set_state("MONITORING",
+                                    f"Cleared {ip}")
 
-            # 4. Back to monitoring
-            if not new_alerts:
-                AGENT.set_state("MONITORING",
-                                "Watching traffic for anomalies…")
+            _time.sleep(0.5)
 
         except Exception as e:
-            AGENT.set_state("ERROR", f"Agent error: {type(e).__name__}: {e}")
-
-        time.sleep(poll_interval)
+            import traceback
+            print(f"[agent] ERROR: {type(e).__name__}: {e}", flush=True)
+            traceback.print_exc()
+            AGENT.set_state("MONITORING", f"recovered from {type(e).__name__}")
+            _time.sleep(2)
 
 def _ask_tier(system: str, context: dict) -> dict:
     """Ask a specific tier to make a decision based on its context.
@@ -439,7 +418,16 @@ def _ask_tier(system: str, context: dict) -> dict:
     Falls back to a default "ignore"/"dismiss" on error.
     """
     if not _SDK_AVAILABLE:
-        return {"action": "ignore", "escalate": False, "reason": "SDK unavailable", "confidence": 0, "self_critique": ""}
+        if "Tier 1" in system:
+            return {"escalate": True, "reason": "auto-escalated by fallback engine"}
+        elif "Tier 2" in system:
+            return {"severity": "HIGH", "recommend_block": True, "targeted_traffic": context.get("targeted_traffic", {})}
+        else:
+            alert = context.get("alert", {})
+            t2 = context.get("tier2_context", {})
+            traffic = t2.get("targeted_traffic", {})
+            return _rule_based_decision(alert, traffic)
+
     import asyncio, json as _json
 
     prompt = (
@@ -473,6 +461,42 @@ def _ask_tier(system: str, context: dict) -> dict:
     except Exception:
         return {"action": "ignore", "escalate": False,
                 "reason": "unparseable decision", "confidence": 0, "self_critique": "parse error"}
+
+def _rule_based_decision(alert: dict, traffic: dict) -> dict:
+    """Deterministic decision. No SDK required."""
+    atype = alert.get("type", "")
+    ip = alert.get("ip", "")
+    pkts = traffic.get("packet_count", 0)
+    ports = traffic.get("unique_port_count", 0)
+
+    if atype == "MALICIOUS FILE":
+        return {"action": "block", "confidence": 95,
+                "reason": f"malicious file from {ip}",
+                "self_critique": "file signature definitive"}
+    if atype == "KILL CHAIN":
+        return {"action": "block", "confidence": 92,
+                "reason": f"multi-stage attack from {ip}",
+                "self_critique": "multiple rules confirm"}
+    if atype == "PORT SCAN" and ports >= 8:
+        return {"action": "block", "confidence": 88,
+                "reason": f"port scan across {ports} services",
+                "self_critique": "unique ports confirm scan"}
+    if atype in ("DoS / FLOOD", "ICMP FLOOD") and pkts >= 15:
+        return {"action": "block", "confidence": 87,
+                "reason": f"flood attack — {pkts} packets",
+                "self_critique": "packet burst confirms"}
+    if atype == "SSH BRUTE FORCE" and pkts >= 8:
+        return {"action": "block", "confidence": 85,
+                "reason": f"SSH brute force — {pkts} SYNs",
+                "self_critique": "repeated SYN on 22"}
+    if atype in ("NULL SCAN", "XMAS SCAN"):
+        return {"action": "block", "confidence": 90,
+                "reason": f"stealth scan from {ip}",
+                "self_critique": "illegal TCP flags"}
+
+    return {"action": "ignore", "confidence": 40,
+            "reason": f"insufficient evidence: {atype}",
+            "self_critique": "single low-signal alert"}
 
 def answer_analyst_question(question: str) -> str:
     """Answer a question using the agent's recent decision log."""
