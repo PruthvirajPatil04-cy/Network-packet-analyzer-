@@ -24,3 +24,5 @@ Thumbs.db
 *.log
 lt_output.txt
 test_det.py
+cloudflared.exe
+tunnel.log
