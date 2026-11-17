@@ -1,0 +1,120 @@
+version: '3.8'
+
+services:
+  # --- Message / Stream Layer (Path B: Redis Streams) ---
+  redis:
+    image: redis:7-alpine
+    container_name: packet-analyzer-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - packet-net
+
+  # --- Backend API & WebSocket Streaming Server (FastAPI) ---
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: packet-analyzer-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_STREAM_NAME=packets-stream
+      - INGEST_API_KEY=packet-analyzer-secret-key-2026
+      - MAX_BUFFER_SIZE=10000
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - packet-net
+
+  # --- Standalone Packet Capture Agent ---
+  agent:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    container_name: packet-analyzer-agent
+    restart: unless-stopped
+    # Least privilege: Grant NET_RAW only for packet sniffing
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    environment:
+      - BACKEND_URL=http://backend:8000
+      - INGEST_API_KEY=packet-analyzer-secret-key-2026
+      - BPF_FILTER=ip
+      - SAMPLING_RATE=1.0
+      - CAPTURE_QUEUE_SIZE=5000
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - packet-net
+
+  # --- Decoupled SOC Detection Agent (Antigravity AI Triage) ---
+  soc_agent:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    container_name: packet-analyzer-soc-agent
+    restart: unless-stopped
+    environment:
+      - BACKEND_URL=http://backend:8000
+      - INGEST_API_KEY=packet-analyzer-secret-key-2026
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+    command: ["python", "-m", "agent.soc_agent"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - packet-net
+
+  # --- React + Vite Dashboard (Nginx) ---
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: packet-analyzer-ui
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - packet-net
+
+  # --- Legacy Streamlit Dashboard (Profile: streamlit) ---
+  streamlit_dashboard:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: packet-analyzer-streamlit
+    restart: unless-stopped
+    profiles: ["streamlit"]
+    ports:
+      - "8501:8501"
+    environment:
+      - BACKEND_URL=http://backend:8000
+    command: ["streamlit", "run", "app.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
+    depends_on:
+      - backend
+    networks:
+      - packet-net
+
+networks:
+  packet-net:
+    driver: bridge

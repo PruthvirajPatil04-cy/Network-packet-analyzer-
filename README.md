@@ -1,71 +1,132 @@
+# 🛡️ Dynamic Network Packet Analyzer & SOC Threat Monitor
 
-# 🛡️ Network Packet Analyzer
+[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.14-blue.svg)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688.svg)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/React-18.3+-61DAFB.svg)](https://react.dev/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg)](https://www.docker.com/)
+[![Prometheus](https://img.shields.io/badge/Metrics-Prometheus-E6522C.svg)](https://prometheus.io/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A network packet analysis tool designed to capture, inspect, and analyze network traffic for monitoring, security assessment, and troubleshooting purposes.
-
-## 🚀 Features
-- **Packet Capture:** Sniff and capture live network data packets passing through your network interface.
-- **Protocol Analysis:** Inspect various network protocols (e.g., TCP, UDP, IP, ICMP, etc.).
-- **Detailed Insights:** View packet source/destination IP addresses, ports, payloads, and header details.
-- **Lightweight & Efficient:** Built for fast processing and easy terminal-based or graphical evaluation.
+A high-throughput, enterprise-grade network packet analysis platform engineered with a decoupled **"Capture → Stream → Consume → Visualize"** architecture. Features live L3/L4 metadata sniffing, bounded queue backpressure, Redis/In-Memory streaming, Prometheus observability, and an autonomous AI-driven SOC triage agent.
 
 ---
 
-## 🛠️ Tech Stack
-- **Language/Framework:
-  **Primary Language
-Python 3.11 — the only programming language in the project. Every file (.py) is Python.
+## 🏛️ Target Architecture
 
-Frameworks & Libraries
-| Category | Technology / Library | What it does |
+```mermaid
+flowchart LR
+    A["[Packet Capture Agent]<br/>(Scapy AsyncSniffer)"] -->|Micro-Batches| B["[Message / Stream Layer]<br/>(Redis Streams / In-Memory)"]
+    B -->|FastAPI Ingest| C["[Backend API & Metrics]<br/>(WebSocket + Prometheus)"]
+    C -->|Push Live Feed| D["[Modern Dashboard]<br/>(React + Vite / Streamlit)"]
+    C -->|Subscribes| E["[Autonomous SOC Agent]<br/>(Antigravity AI Triage)"]
+    E -->|Alerts /api/alerts| C
+```
+
+For complete technical specifications, mathematical latency modeling, and Kafka migration plans, see [ARCHITECTURE.md](ARCHITECTURE.md).
+
+---
+
+## ✨ Key Features
+
+- **Decoupled Architecture:** Capture agent, streaming broker, REST/WebSocket API, and UI run as separate services.
+- **Strict Privacy Compliance:** Inspects only L3/L4 network headers (IPs, ports, flags, protocols). **Zero packet payload inspection.**
+- **Bounded Queue & Backpressure:** Resilient FIFO drop-oldest mechanism protects the agent from memory starvation during high-PPS bursts.
+- **Dual Streaming Modes:**
+  - **Path A (Zero Ops Demo):** High-speed in-memory ring buffer with `asyncio.Queue` broadcast.
+  - **Path B (Enterprise Scale):** Redis Streams (`XADD`, consumer groups, replayable persistence).
+- **Wireshark-Inspired UI:** High-contrast dark React dashboard with live scrolling packet table, protocol pie breakdown, throughput line charts, and packet inspector.
+- **AI-Powered SOC Agent:** Decoupled heuristic detector with Google Antigravity SDK (Gemini AI) automated attack explanations.
+- **Production Observability:** Native `/metrics` Prometheus exposition endpoint tracking PPS, bytes, queue depth, active clients, and P99 latency.
+
+---
+
+## 🚀 Quickstart: Live Demo via Docker Compose
+
+Spin up the entire ecosystem (Redis, FastAPI, Capture Agent, SOC Agent, React UI) with a single command:
+
+```bash
+# 1. Clone repository
+git clone https://github.com/PruthvirajPatil04-cy/Network-packet-analyzer-.git
+cd Network-packet-analyzer-
+
+# 2. (Optional) Set your Gemini API key for AI SOC triage
+export GEMINI_API_KEY="your-gemini-api-key"
+
+# 3. Launch the containerized platform
+docker compose up --build
+```
+
+### Access Points:
+| Service | URL | Description |
 | :--- | :--- | :--- |
-| **Web UI Framework** | **Streamlit** | Powers the entire dashboard — panes, sidebar, tour, and refresh loop. |
-| **Packet Capture** | **Scapy** | Reads real network packets (utilized in `capture.py`). |
-| **Charting Framework** | **Plotly** (`plotly.graph_objects`, `plotly.express`) | Renders dynamic charts: bar, line, gauge, timeline, heatmap, throughput, and flow. |
-| **Data Framework** | **Pandas** | Manages packet tables, threat scorecards, and CSV exports. |
-| **Testing Framework** | **Pytest** | Executes all 20+ unit tests. |
-| **AI SDK** | **Google Antigravity SDK** | Powers Gemini-driven alert explanations and the autonomous SOC agent. |
-| **Concurrency** | **Python Stdlib** (`threading`, `asyncio`) | Handles simulator threads, agent threads, packet buffer locks, and async SDK calls. |
-| **Serialization** | **Python Stdlib** (`json`) | Manages alert exports and agent decision logs. |
-| **Date/Time** | **Python Stdlib** (`datetime`) | Generates timestamps for packets and decisions. |
-- **Environment:** Developed using Antigravity
+| **React Dashboard** | [http://localhost:3000](http://localhost:3000) | Live interactive Wireshark-style monitoring UI |
+| **Backend API Docs** | [http://localhost:8000/docs](http://localhost:8000/docs) | OpenAPI interactive Swagger documentation |
+| **Prometheus Metrics**| [http://localhost:8000/metrics](http://localhost:8000/metrics)| Real-time system telemetry and P99 latencies |
+| **Health Diagnostic** | [http://localhost:8000/health](http://localhost:8000/health)  | Liveness/readiness probe |
+| **Streamlit UI** | [http://localhost:8501](http://localhost:8501) | Legacy Streamlit UI (`docker compose --profile streamlit up`) |
 
 ---
 
-## 📥 Getting Started
+## 🛠️ Local Development Setup (Manual)
 
-### Prerequisites
-Make sure you have the following installed on your system:
-- Python / Node.js / C++ Compiler (depending on your project stack)
-- Npcap / WinPcap (if running packet capturing on Windows) or libpcap (on Linux/macOS)
+If running directly without Docker:
 
-### Installation & Setup
+### 1. Prerequisites
+- Python 3.11+
+- Node.js 18+ & npm
+- (Optional) Npcap/WinPcap on Windows or `libpcap` on Linux for physical network capture. (The agent automatically defaults to high-fidelity simulated traffic if physical sniffing permissions are absent).
 
-1. **Clone the repository:**
-   ```bash
-   git clone [https://github.com/PruthvirajPatil04-cy/Network-packet-analyzer-.git](https://github.com/PruthvirajPatil04-cy/Network-packet-analyzer-.git)
-   cd Network-packet-analyzer-
-Install dependencies:
-
-Bash
-# Example for Python:
+### 2. Backend & Streaming Server
+```bash
+# Install Python dependencies
 pip install -r requirements.txt
-Run the application:
 
-Bash
-# Example:
-python main.py
-(Note: Depending on your OS and network permissions, you may need to run the tool with Administrator / sudo privileges to capture live packets).
+# Start FastAPI backend
+uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+```
 
-📌 Usage
-Start the tool and select your network interface.
+### 3. Packet Capture Agent (Standalone Service)
+In a second terminal:
+```bash
+# Run capture agent
+python -m agent.capture
+```
 
-Monitor incoming and outgoing packets in real-time.
+### 4. Autonomous SOC Detection Agent
+In a third terminal:
+```bash
+# Run SOC agent
+python -m agent.soc_agent
+```
 
-Review extracted metrics or generated log reports.
+### 5. Frontend Dashboard (React + Vite)
+In a fourth terminal:
+```bash
+cd frontend
+npm install
+npm run dev
+# Dashboard opens on http://localhost:3000
+```
 
-🤝 Contributing
-Contributions, issues, and feature requests are welcome! Feel free to check the issues page.
+---
 
-📝 License
-This project is open-source and available under the MIT License.
+## 🧪 Automated Testing
+
+Run the full automated test suite (54 unit and integration tests covering queue backpressure, Pydantic validation, FastAPI endpoints, WebSocket broadcasting, and anomaly heuristics):
+
+```bash
+python -m pytest tests -v
+```
+
+---
+
+## 🔒 Security & Least Privilege
+
+- **Least Privilege:** Docker capture agents require only `NET_RAW` and `NET_ADMIN` capabilities rather than full `--privileged` access.
+- **API Key Guard:** Ingest and alert submission endpoints require validation via the `X-API-Key` header.
+- **Payload Exclusion:** The system strictly parses network headers. No application data, payloads, or session cookies are stored or broadcast.
+
+---
+
+## 📜 License
+Distributed under the MIT License. See `LICENSE` for more information.

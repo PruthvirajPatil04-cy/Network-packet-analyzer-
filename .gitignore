@@ -26,3 +26,8 @@ lt_output.txt
 test_det.py
 cloudflared.exe
 tunnel.log
+
+# Frontend Node.js
+node_modules/
+frontend/node_modules/
+frontend/dist/
