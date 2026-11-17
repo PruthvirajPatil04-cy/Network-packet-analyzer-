@@ -2014,6 +2014,130 @@ with st.expander("🌍 Attacker Geography", expanded=False):
                     config={"displayModeBar": False},
                     key="geo_map")
 
+# ---------------------------------------------------------------------
+# Live Demo Server & Dynamic Threat Blocking (student.college.edu)
+# ---------------------------------------------------------------------
+def _render_live_server_section():
+    st.markdown("### 🌐 Live Demo Server — `student.college.edu` & Threat Engine")
+    try:
+        import urllib.request
+        import json
+
+        base_api = "http://127.0.0.1:8000"
+        with urllib.request.urlopen(f"{base_api}/api/server/status", timeout=2) as resp:
+            srv_status = json.loads(resp.read().decode())
+    except Exception:
+        srv_status = None
+
+    if not srv_status or not srv_status.get("demo_server", {}).get("online"):
+        st.info("ℹ️ Demo Server (`student.college.edu:8001`) is synchronizing with Backend API (:8000)...")
+        return
+
+    mcol1, mcol2, mcol3, mcol4 = st.columns(4)
+    mcol1.metric("Server Status", "ONLINE", delta="student.college.edu:8001")
+    mcol2.metric("Threat Engine", "ACTIVE", delta="L7 Firewall")
+    mcol3.metric("Firewall Blocklist", srv_status.get("blocklist", {}).get("count", 0))
+    p99 = srv_status.get("websocket", {}).get("latency_ms_p99", 0)
+    mcol4.metric("P99 Latency", f"{p99:.1f} ms")
+
+    # Interactive Attack Ingestion Buttons
+    st.markdown("##### ⚡ Interactive Demo Attack Injections")
+    acol1, acol2, acol3, acol4, acol5 = st.columns(5)
+
+    def _inject(atype):
+        try:
+            req = urllib.request.Request(
+                f"{base_api}/api/server/traffic-control/inject-attack?attack_type={atype}",
+                data=b"",
+                method="POST"
+            )
+            urllib.request.urlopen(req, timeout=2)
+            st.toast(f"Injected {atype} attack pattern!", icon="⚡")
+        except Exception as e:
+            st.error(f"Failed to inject: {e}")
+
+    if acol1.button("💥 SQLi", use_container_width=True, key="btn_sqli"):
+        _inject("sqli")
+    if acol2.button("📁 Path Traversal", use_container_width=True, key="btn_traversal"):
+        _inject("path_traversal")
+    if acol3.button("💉 Command Inj", use_container_width=True, key="btn_cmd"):
+        _inject("command_injection")
+    if acol4.button("⚡ XSS", use_container_width=True, key="btn_xss"):
+        _inject("xss")
+    if acol5.button("🍯 Honeypot (/admin)", use_container_width=True, key="btn_honeypot"):
+        _inject("honeypot")
+
+    # Fetch Recent Live Events
+    try:
+        with urllib.request.urlopen(f"{base_api}/api/server/live-events?limit=15", timeout=2) as resp:
+            events_data = json.loads(resp.read().decode())
+    except Exception:
+        events_data = []
+
+    st.markdown("##### 📡 Live HTTP Traffic Flow & Threat Decisions")
+    if events_data:
+        rows = []
+        for ev in events_data[:12]:
+            ts_str = datetime.fromtimestamp(ev.get("ts", 0)).strftime("%H:%M:%S")
+            reasons = ", ".join(ev.get("reasons", [])) or "Benign"
+            rows.append({
+                "Time": ts_str,
+                "Method": ev.get("method"),
+                "Path": ev.get("path"),
+                "Source IP": ev.get("src_ip"),
+                "Decision": ev.get("decision", "").upper(),
+                "Score": f"{ev.get('score', 0):.2f}",
+                "Severity": ev.get("severity", "LOW"),
+                "Violations": reasons
+            })
+        ev_df = pd.DataFrame(rows)
+        def _style_decision(val):
+            if val == "BLOCK":
+                return "background-color: #4a1518; color: #fca5a5; font-weight: bold;"
+            if val == "THROTTLE":
+                return "background-color: #3d2f0f; color: #fbbf24; font-weight: bold;"
+            return "background-color: #14331a; color: #6ee7a0;"
+        try:
+            styled_df = ev_df.style.map(_style_decision, subset=["Decision"])
+        except AttributeError:
+            styled_df = ev_df.style.applymap(_style_decision, subset=["Decision"])
+        st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    else:
+        st.caption("Waiting for live traffic events from student portal...")
+
+    # Fetch Blocklist
+    try:
+        with urllib.request.urlopen(f"{base_api}/api/server/blocked", timeout=2) as resp:
+            blocked_list = json.loads(resp.read().decode())
+    except Exception:
+        blocked_list = []
+
+    st.markdown("##### 🚫 Dynamic Firewall Blocklist (Application-Layer)")
+    if blocked_list:
+        b_rows = []
+        for b in blocked_list:
+            b_rows.append({
+                "Blocked IP": b.get("ip"),
+                "Reason": b.get("reason"),
+                "Hits Dropped": b.get("hits", 0),
+                "TTL Remaining (s)": f"{max(0, b.get('ttl_remaining', 0)):.1f}",
+                "Added At": datetime.fromtimestamp(b.get("timestamp", 0)).strftime("%H:%M:%S")
+            })
+        st.dataframe(pd.DataFrame(b_rows), use_container_width=True, hide_index=True)
+    else:
+        st.info("No IPs currently blocked by the application firewall.")
+
+if hasattr(st, "fragment"):
+    @st.fragment(run_every=2)
+    def render_live_server_tab():
+        _render_live_server_section()
+else:
+    def render_live_server_tab():
+        _render_live_server_section()
+
+with st.expander("🌐 Live Server: student.college.edu (Dynamic Threat Blocking)", expanded=True):
+    render_live_server_tab()
+
 n_types = len({a["type"] for a in replay_detector.alerts})
 files_blocked = sum(1 for a in replay_detector.alerts if a["type"] == "MALICIOUS FILE")
 st.markdown(f"""

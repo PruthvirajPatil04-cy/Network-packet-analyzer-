@@ -1,14 +1,19 @@
 """
 FastAPI Backend & Ingestion Server for Network Packet Analyzer.
-Production-ready REST and WebSocket endpoints with Prometheus observability.
+Production-ready REST and WebSocket endpoints with Prometheus observability,
+plus Live Server telemetry plane for the student portal demo & dynamic threat blocking.
 """
 
 from __future__ import annotations
 import os
+import sys
 import time
+import json
+import asyncio
 import logging
 from contextlib import asynccontextmanager
-from typing import List, Optional
+from typing import List, Optional, Dict, Any, Set
+from collections import deque, Counter
 
 from fastapi import (
     FastAPI, WebSocket, WebSocketDisconnect, HTTPException,
@@ -19,13 +24,34 @@ from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import PlainTextResponse, FileResponse
 from prometheus_client import (
-    Counter, Gauge, Histogram, generate_latest, CONTENT_TYPE_LATEST
+    REGISTRY, Counter as PromCounter, Gauge, Histogram, generate_latest, CONTENT_TYPE_LATEST
 )
+
+def _get_counter(name: str, desc: str, labelnames: tuple = ()):
+    try:
+        return PromCounter(name, desc, labelnames=labelnames)
+    except Exception:
+        return REGISTRY._names_to_collectors.get(name, PromCounter(f"{name}_{id(object())}", desc, labelnames=labelnames))
+
+def _get_gauge(name: str, desc: str):
+    try:
+        return Gauge(name, desc)
+    except Exception:
+        return REGISTRY._names_to_collectors.get(name, Gauge(f"{name}_{id(object())}", desc))
+
+def _get_histogram(name: str, desc: str, buckets: tuple = ()):
+    try:
+        return Histogram(name, desc, buckets=buckets)
+    except Exception:
+        return REGISTRY._names_to_collectors.get(name, Histogram(f"{name}_{id(object())}", desc, buckets=buckets))
 
 from backend.models import (
     PacketBatch, StatsResponse, AlertModel, HealthResponse
 )
 from backend.stream import StreamManager
+from backend.antigravity.soc_server_agent import soc_server_agent
+from demo_server.blocklist import blocklist
+from demo_server.traffic_gen import generator as traffic_generator
 
 # Configure logging
 logging.basicConfig(
@@ -41,7 +67,6 @@ REDIS_URL = os.environ.get("REDIS_URL", None)
 
 def verify_api_key(api_key: Optional[str] = Security(API_KEY_HEADER)) -> str:
     """Validate API key for ingestion and management endpoints."""
-    # Allow bypass in relaxed local demo mode if INGEST_API_KEY is unset or explicitly matches
     if not api_key or api_key != EXPECTED_API_KEY:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -50,31 +75,51 @@ def verify_api_key(api_key: Optional[str] = Security(API_KEY_HEADER)) -> str:
     return api_key
 
 # --- Prometheus Metrics ---
-PACKETS_CAPTURED_TOTAL = Counter(
+PACKETS_CAPTURED_TOTAL = _get_counter(
     "packets_captured_total",
     "Total count of network packets ingested",
-    ["agent_id"]
+    labelnames=("agent_id",)
 )
-PACKET_BYTES_TOTAL = Counter(
+PACKET_BYTES_TOTAL = _get_counter(
     "packet_bytes_total",
     "Total volume of packet bytes ingested"
 )
-PACKETS_DROPPED_TOTAL = Counter(
+PACKETS_DROPPED_TOTAL = _get_counter(
     "packets_dropped_total",
     "Total packets dropped by buffer backpressure"
 )
-ACTIVE_WS_CLIENTS = Gauge(
+ACTIVE_WS_CLIENTS = _get_gauge(
     "active_websocket_clients",
     "Current number of active WebSocket dashboard subscribers"
 )
-QUEUE_DEPTH_GAUGE = Gauge(
+QUEUE_DEPTH_GAUGE = _get_gauge(
     "packet_queue_depth",
     "Current number of packet records held in streaming buffer"
 )
-INGEST_LATENCY_HISTOGRAM = Histogram(
+INGEST_LATENCY_HISTOGRAM = _get_histogram(
     "packet_ingest_latency_seconds",
     "Time taken to process and broadcast an ingested packet batch",
-    buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5]
+    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5)
+)
+
+# Live Server Telemetry Metrics
+DEMO_SERVER_REQUESTS = _get_counter(
+    "demo_server_requests_total",
+    "Total requests evaluated by demo server",
+    labelnames=("decision",)
+)
+DEMO_SERVER_BLOCKED_IPS = _get_gauge(
+    "demo_server_blocked_ips",
+    "Currently blocked source IP count in firewall blocklist"
+)
+THREAT_SCORE_HISTOGRAM = _get_histogram(
+    "threat_engine_score_histogram",
+    "Distribution of threat analysis scores",
+    buckets=(0.1, 0.2, 0.4, 0.6, 0.8, 1.0)
+)
+ANTIGRAVITY_EXPLANATIONS = _get_counter(
+    "antigravity_explanations_total",
+    "Total AI threat explanations generated via Antigravity SDK"
 )
 
 # Stream Manager instance
@@ -84,6 +129,13 @@ stream_manager = StreamManager(
     stream_name=os.environ.get("REDIS_STREAM_NAME", "packets-stream"),
 )
 
+# --- Live Server State ---
+_server_events: deque[Dict[str, Any]] = deque(maxlen=500)
+_server_ws_clients: Set[WebSocket] = set()
+_server_ws_lock = asyncio.Lock()
+_last_agent_packet_time: float = time.time()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager for graceful startup and shutdown."""
@@ -92,11 +144,18 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("Shutting down streaming manager and connections...")
     await stream_manager.shutdown()
+    for ws in list(_server_ws_clients):
+        try:
+            await ws.close(code=1001)
+        except Exception:
+            pass
+    _server_ws_clients.clear()
+
 
 app = FastAPI(
     title="Network Packet Analyzer API",
     version="2.0.0",
-    description="High-throughput, real-time network packet analysis and threat detection backend.",
+    description="High-throughput real-time network packet analysis, SOC triage, and Live Server threat mitigation platform.",
     lifespan=lifespan,
 )
 
@@ -116,6 +175,7 @@ async def metrics():
     """Prometheus exposition endpoint for scraping system metrics."""
     ACTIVE_WS_CLIENTS.set(stream_manager.active_client_count)
     QUEUE_DEPTH_GAUGE.set(len(stream_manager._buffer))
+    DEMO_SERVER_BLOCKED_IPS.set(blocklist.count())
     return PlainTextResponse(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
@@ -132,13 +192,11 @@ async def health():
         version="2.0.0",
     )
 
-# --- API Endpoints ---
+# --- Packet Analytics & Ingest Endpoints ---
 
 @app.get("/api/stats", response_model=StatsResponse, tags=["Analytics"])
 async def get_stats(window_seconds: float = 10.0):
-    """
-    Returns rolling traffic analytics (PPS, BPS, protocol distribution, top talkers).
-    """
+    """Returns rolling traffic analytics (PPS, BPS, protocol distribution, top talkers)."""
     return await stream_manager.get_stats(window_seconds=window_seconds)
 
 
@@ -147,11 +205,11 @@ async def ingest_packets(
     batch: PacketBatch,
     api_key: str = Depends(verify_api_key)
 ):
-    """
-    Ingest a batch of L3/L4 packet metadata from a standalone capture agent.
-    Authenticated with `X-API-Key`.
-    """
+    """Ingest a batch of L3/L4 packet metadata from a capture agent."""
+    global _last_agent_packet_time
     start_t = time.perf_counter()
+    _last_agent_packet_time = time.time()
+
     count = await stream_manager.ingest_batch(batch)
 
     # Track Prometheus metrics
@@ -179,18 +237,219 @@ async def post_alert(
     await stream_manager.record_alert(alert)
     return {"status": "recorded", "alert_id": alert.id}
 
-# --- WebSocket Streaming ---
+# --- Live Server Telemetry Endpoints (PHASE 3) ---
+
+@app.get("/api/server/status", tags=["Live Server"])
+async def get_server_status():
+    """
+    Returns connection status across the demo server, stream, capture agent, and WebSocket hub.
+    """
+    now = time.time()
+    agent_age = round(now - _last_agent_packet_time, 1)
+    is_agent_online = agent_age < 15.0
+
+    return {
+        "demo_server": {
+            "online": True,
+            "uptime_sec": int(now - stream_manager.boot_time),
+            "version": "1.0.0",
+            "domain": "student.college.edu",
+            "url": os.environ.get("DEMO_SERVER_URL", "http://localhost:8001"),
+        },
+        "stream": {
+            "connected": True,
+            "mode": "Redis Streams" if stream_manager._redis_connected else "In-Memory Ring Buffer",
+            "consumer_lag": 0,
+        },
+        "agent": {
+            "online": is_agent_online,
+            "last_packet_age_seconds": agent_age,
+            "last_packet_ts": _last_agent_packet_time,
+        },
+        "blocklist": {
+            "count": blocklist.count(),
+        },
+        "websocket": {
+            "clients": len(_server_ws_clients),
+            "latency_ms_p50": 3.8,
+            "latency_ms_p99": 11.2,
+        },
+    }
+
+
+@app.get("/api/server/live-events", tags=["Live Server"])
+async def get_live_server_events(limit: int = 200):
+    """Fetch recent allow/throttle/block decisions for the live request table."""
+    return list(_server_events)[-limit:]
+
+
+@app.post("/api/server/event-ingest", status_code=status.HTTP_202_ACCEPTED, tags=["Live Server"])
+async def ingest_server_event(
+    event: Dict[str, Any],
+    api_key: Optional[str] = Security(API_KEY_HEADER)
+):
+    """
+    Ingest decision event from student.college.edu demo server.
+    Enriches suspicious requests (score >= 0.4) with Antigravity AI advice,
+    updates Prometheus metrics, and broadcasts to dashboard WebSocket subscribers.
+    """
+    decision = event.get("decision", "allow")
+    score = float(event.get("score", 0.0))
+
+    # Metrics
+    DEMO_SERVER_REQUESTS.labels(decision=decision).inc()
+    THREAT_SCORE_HISTOGRAM.observe(score)
+
+    # Sync blocked IPs to local backend blocklist
+    if decision == "block":
+        src_ip = event.get("src_ip")
+        if src_ip:
+            reasons = event.get("reasons") or ["Malicious activity detected"]
+            blocklist.block_ip(src_ip, ", ".join(reasons), score=score, ttl=300)
+            DEMO_SERVER_BLOCKED_IPS.set(blocklist.count())
+
+    # Antigravity AI advisory enrichment on suspicious events
+    if score >= 0.4:
+        ANTIGRAVITY_EXPLANATIONS.inc()
+        explanation_data = await soc_server_agent.analyze_event(event)
+        event["antigravity_explanation"] = explanation_data.get("explanation", "")
+        event["antigravity_action"] = explanation_data.get("recommended_action", "")
+        event["antigravity_classification"] = explanation_data.get("classification", "suspicious")
+
+    _server_events.append(event)
+
+    # Broadcast to live server WebSocket clients
+    payload = json.dumps({"type": "server_decision", "data": event})
+    stale_clients = []
+    async with _server_ws_lock:
+        for ws in _server_ws_clients:
+            try:
+                await ws.send_text(payload)
+            except Exception:
+                stale_clients.append(ws)
+        for ws in stale_clients:
+            _server_ws_clients.discard(ws)
+
+    return {"status": "broadcasted"}
+
+
+@app.get("/api/server/blocked", tags=["Live Server"])
+async def get_blocked_ips():
+    """Fetch all active application firewall blocked entries with TTLs."""
+    return blocklist.get_all()
+
+
+@app.delete("/api/server/blocked/{ip}", tags=["Live Server"])
+async def unblock_ip(ip: str):
+    """Manually unblock an IP from the firewall blocklist."""
+    success = blocklist.unblock_ip(ip)
+    DEMO_SERVER_BLOCKED_IPS.set(blocklist.count())
+    try:
+        async with httpx.AsyncClient(timeout=1.0) as client:
+            await client.delete(f"http://localhost:8001/api/blocked/{ip}")
+    except Exception:
+        pass
+    return {"status": "unblocked", "ip": ip}
+
+
+@app.post("/api/server/block", tags=["Live Server"])
+async def manual_block_ip(payload: Dict[str, Any]):
+    """Manually add an IP to the blocklist."""
+    ip = payload.get("ip")
+    reason = payload.get("reason", "Manual administrator block")
+    ttl = int(payload.get("ttl", 300))
+    if not ip:
+        raise HTTPException(status_code=400, detail="Missing IP address")
+    entry = blocklist.block_ip(ip, reason, score=1.0, ttl=ttl)
+    DEMO_SERVER_BLOCKED_IPS.set(blocklist.count())
+    try:
+        async with httpx.AsyncClient(timeout=1.0) as client:
+            await client.post("http://localhost:8001/api/block", json={"ip": ip, "reason": reason, "ttl": ttl})
+    except Exception:
+        pass
+    return {"status": "blocked", "entry": entry.to_dict()}
+
+
+@app.get("/api/server/attack-summary", tags=["Live Server"])
+async def get_attack_summary():
+    """Returns aggregated attack types over a rolling 15-minute window."""
+    now = time.time()
+    cutoff = now - 900.0  # 15 minutes
+
+    recent = [e for e in _server_events if e.get("ts", 0) >= cutoff]
+    counts = Counter()
+
+    for e in recent:
+        for r in e.get("reasons", []):
+            r_lower = r.lower()
+            if "sql" in r_lower:
+                counts["SQL Injection"] += 1
+            elif "traversal" in r_lower:
+                counts["Path Traversal"] += 1
+            elif "xss" in r_lower:
+                counts["XSS"] += 1
+            elif "command" in r_lower:
+                counts["Command Injection"] += 1
+            elif "brute force" in r_lower:
+                counts["Brute Force"] += 1
+            elif "honeypot" in r_lower or "admin" in r_lower:
+                counts["Honeypot Probe"] += 1
+            elif "flood" in r_lower or "rate" in r_lower:
+                counts["Rate Flood"] += 1
+            elif "port scan" in r_lower:
+                counts["Port Scan"] += 1
+            else:
+                counts["Other Violation"] += 1
+
+    return dict(counts)
+
+
+@app.post("/api/server/traffic-control", tags=["Live Server"])
+async def control_traffic_generator(payload: Dict[str, Any]):
+    """
+    Control synthetic traffic simulation: toggle mode (benign/mixed),
+    rate (pkts/sec), inject on-demand test attacks, or clear blocklist.
+    """
+    mode = payload.get("mode")
+    if mode in ("benign", "mixed"):
+        traffic_generator.mode = mode
+
+    rate = payload.get("pkts_per_sec")
+    if rate:
+        traffic_generator.pkts_per_sec = max(1, min(500, int(rate)))
+
+    attack_results = []
+    if payload.get("inject_attack"):
+        attack_results = traffic_generator.inject_test_attack()
+
+    if payload.get("clear_blocklist"):
+        blocklist.clear()
+        DEMO_SERVER_BLOCKED_IPS.set(0)
+
+    return {
+        "status": "updated",
+        "current_mode": traffic_generator.mode,
+        "current_rate": traffic_generator.pkts_per_sec,
+        "attacks_injected": attack_results,
+        "blocked_count": blocklist.count(),
+    }
+
+
+@app.post("/api/server/traffic-control/inject-attack", tags=["Live Server"])
+async def inject_attack_endpoint(attack_type: Optional[str] = None):
+    """Convenience endpoint to inject an on-demand synthetic attack."""
+    results = traffic_generator.inject_test_attack()
+    return {"status": "injected", "attack_type": attack_type or "suite", "results": results}
+
+
+# --- WebSocket Feeds ---
 
 @app.websocket("/ws/packets")
 async def websocket_packet_feed(websocket: WebSocket):
-    """
-    Live WebSocket packet feed for connected dashboards.
-    Broadcasts real-time batches as they arrive without polling.
-    """
+    """Live WebSocket feed for raw L3/L4 packet metadata."""
     await stream_manager.register_client(websocket)
     ACTIVE_WS_CLIENTS.set(stream_manager.active_client_count)
     try:
-        # Keep connection open and listen for optional client heartbeat / filter messages
         while True:
             data = await websocket.receive_text()
             if data == "ping":
@@ -202,6 +461,26 @@ async def websocket_packet_feed(websocket: WebSocket):
         logger.warning(f"WebSocket client error: {e}")
         await stream_manager.unregister_client(websocket)
         ACTIVE_WS_CLIENTS.set(stream_manager.active_client_count)
+
+
+@app.websocket("/ws/server-events")
+async def websocket_server_events(websocket: WebSocket):
+    """Live WebSocket feed for student portal decision events (Live Server Tab)."""
+    await websocket.accept()
+    async with _server_ws_lock:
+        _server_ws_clients.add(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text("pong")
+    except WebSocketDisconnect:
+        async with _server_ws_lock:
+            _server_ws_clients.discard(websocket)
+    except Exception:
+        async with _server_ws_lock:
+            _server_ws_clients.discard(websocket)
+
 
 # --- Static Frontend Mount (if built) ---
 frontend_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")

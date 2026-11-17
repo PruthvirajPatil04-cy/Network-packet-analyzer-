@@ -30,6 +30,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - REDIS_STREAM_NAME=packets-stream
       - INGEST_API_KEY=packet-analyzer-secret-key-2026
+      - DEMO_SERVER_URL=http://demo-server:8001
       - MAX_BUFFER_SIZE=10000
     depends_on:
       redis:
@@ -41,6 +42,7 @@ services:
       retries: 3
     networks:
       - packet-net
+      - demo-net
 
   # --- Standalone Packet Capture Agent ---
   agent:
@@ -49,7 +51,6 @@ services:
       dockerfile: agent/Dockerfile
     container_name: packet-analyzer-agent
     restart: unless-stopped
-    # Least privilege: Grant NET_RAW only for packet sniffing
     cap_add:
       - NET_RAW
       - NET_ADMIN
@@ -83,6 +84,53 @@ services:
     networks:
       - packet-net
 
+  # --- Simulated Student Portal Demo Server (student.college.edu) ---
+  demo-server:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: packet-analyzer-demo-server
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      - BACKEND_URL=http://backend:8000
+      - REDIS_URL=redis://redis:6379/0
+      - STUDENT_USER=student
+      - STUDENT_PASS=college2026
+    command: ["uvicorn", "demo_server.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - demo-net
+      - packet-net
+
+  # --- Safe Local Traffic Generator ---
+  traffic-gen:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    container_name: packet-analyzer-traffic-gen
+    restart: unless-stopped
+    environment:
+      - DEMO_SERVER_URL=http://demo-server:8001
+      - TRAFFIC_MODE=mixed
+      - PKTS_PER_SEC=20
+    command: ["python", "-m", "demo_server.traffic_gen"]
+    depends_on:
+      demo-server:
+        condition: service_healthy
+    networks:
+      - demo-net
+
   # --- React + Vite Dashboard (Nginx) ---
   frontend:
     build:
@@ -94,8 +142,10 @@ services:
       - "3000:80"
     depends_on:
       - backend
+      - demo-server
     networks:
       - packet-net
+      - demo-net
 
   # --- Legacy Streamlit Dashboard (Profile: streamlit) ---
   streamlit_dashboard:
@@ -117,4 +167,6 @@ services:
 
 networks:
   packet-net:
+    driver: bridge
+  demo-net:
     driver: bridge

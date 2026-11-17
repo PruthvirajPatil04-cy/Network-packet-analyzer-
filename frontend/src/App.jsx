@@ -5,8 +5,11 @@ import ChartsPanel from './components/ChartsPanel';
 import PacketTable from './components/PacketTable';
 import AlertsPanel from './components/AlertsPanel';
 import MetricsModal from './components/MetricsModal';
+import LiveServerTab from './components/LiveServerTab';
+import { Layers, Server } from 'lucide-react';
 
 export default function App() {
+  const [activeTab, setActiveTab] = useState('telemetry'); // 'telemetry' | 'liveserver'
   const [isConnected, setIsConnected] = useState(false);
   const [activeClients, setActiveClients] = useState(1);
   const [packets, setPackets] = useState([]);
@@ -23,14 +26,13 @@ export default function App() {
   // Determine WebSocket URL
   const getWsUrl = () => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // If running under Vite dev on port 3000, connect to backend at 8000
     if (window.location.port === '3000') {
       return `${protocol}//localhost:8000/ws/packets`;
     }
     return `${protocol}//${window.location.host}/ws/packets`;
   };
 
-  // Connect WebSocket
+  // Connect WebSocket for Telemetry
   useEffect(() => {
     let reconnectTimer = null;
     let isMounted = true;
@@ -104,13 +106,11 @@ export default function App() {
             const nowStr = new Date().toLocaleTimeString('en-GB');
             setHistory((prev) => {
               const updated = [...prev, { time: nowStr, pps: data.pps, kbps: (data.bps / 1024).toFixed(1) }];
-              return updated.slice(-30); // 30 points (approx 30s)
+              return updated.slice(-30);
             });
           }
         }
-      } catch (e) {
-        // Silent fail on network blips
-      }
+      } catch (e) {}
     };
 
     const fetchAlerts = async () => {
@@ -118,13 +118,9 @@ export default function App() {
         const resp = await fetch('/api/alerts?limit=50');
         if (resp.ok) {
           const data = await resp.json();
-          if (isMounted) {
-            setAlerts(data);
-          }
+          if (isMounted) setAlerts(data);
         }
-      } catch (e) {
-        // Silent fail
-      }
+      } catch (e) {}
     };
 
     const fetchHealth = async () => {
@@ -132,13 +128,9 @@ export default function App() {
         const resp = await fetch('/health');
         if (resp.ok) {
           const data = await resp.json();
-          if (isMounted) {
-            setActiveClients(data.active_ws_clients || 1);
-          }
+          if (isMounted) setActiveClients(data.active_ws_clients || 1);
         }
-      } catch (e) {
-        // Silent fail
-      }
+      } catch (e) {}
     };
 
     fetchStats();
@@ -159,7 +151,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#0a0e17] text-gray-100 flex flex-col font-sans">
-      {/* Top Navigation */}
+      {/* Top Navigation Bar */}
       <Header
         isConnected={isConnected}
         activeClients={activeClients}
@@ -167,27 +159,62 @@ export default function App() {
         onOpenMetrics={() => setIsMetricsOpen(true)}
       />
 
-      {/* Main Dashboard Grid */}
-      <main className="flex-1 p-4 sm:p-6 space-y-5 max-w-[1600px] w-full mx-auto">
-        {/* Metric Summary Cards */}
-        <MetricCards stats={stats} alertCount={alerts.length} />
+      {/* Tab Switcher */}
+      <div className="border-b border-[#1b253b] bg-[#0d1424] px-6 py-2.5">
+        <div className="max-w-[1600px] mx-auto flex items-center space-x-3 font-mono text-xs">
+          <button
+            onClick={() => setActiveTab('telemetry')}
+            className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-lg transition-all ${
+              activeTab === 'telemetry'
+                ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/40 font-bold shadow-[0_0_10px_rgba(6,182,212,0.15)]'
+                : 'text-gray-400 hover:text-gray-200 border border-transparent'
+            }`}
+          >
+            <Layers className="w-4 h-4" />
+            <span>Network Telemetry (Raw Frames)</span>
+          </button>
 
-        {/* Real-time Charts Panel */}
-        <ChartsPanel stats={stats} history={history} />
-
-        {/* Bottom Split: Live Packet Table & SOC Threat Intelligence */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          <div className="lg:col-span-2">
-            <PacketTable
-              packets={packets}
-              isPaused={isPaused}
-              onTogglePause={() => setIsPaused((prev) => !prev)}
-            />
-          </div>
-          <div>
-            <AlertsPanel alerts={alerts} />
-          </div>
+          <button
+            onClick={() => setActiveTab('liveserver')}
+            className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-lg transition-all ${
+              activeTab === 'liveserver'
+                ? 'bg-rose-500/15 text-rose-400 border border-rose-500/40 font-bold shadow-[0_0_10px_rgba(244,63,94,0.15)]'
+                : 'text-gray-400 hover:text-gray-200 border border-transparent'
+            }`}
+          >
+            <Server className="w-4 h-4" />
+            <span>Live Server: student.college.edu (Threat Defense)</span>
+          </button>
         </div>
+      </div>
+
+      {/* Main Dashboard Content */}
+      <main className="flex-1 p-4 sm:p-6 space-y-5 max-w-[1600px] w-full mx-auto">
+        {activeTab === 'telemetry' ? (
+          <>
+            {/* Metric Summary Cards */}
+            <MetricCards stats={stats} alertCount={alerts.length} />
+
+            {/* Real-time Charts Panel */}
+            <ChartsPanel stats={stats} history={history} />
+
+            {/* Bottom Split: Live Packet Table & SOC Threat Intelligence */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+              <div className="lg:col-span-2">
+                <PacketTable
+                  packets={packets}
+                  isPaused={isPaused}
+                  onTogglePause={() => setIsPaused((prev) => !prev)}
+                />
+              </div>
+              <div>
+                <AlertsPanel alerts={alerts} />
+              </div>
+            </div>
+          </>
+        ) : (
+          <LiveServerTab />
+        )}
       </main>
 
       {/* Prometheus Metrics Modal */}
