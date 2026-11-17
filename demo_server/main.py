@@ -120,22 +120,27 @@ async def emit_decision_event(event: Dict[str, Any]) -> None:
 
 @app.middleware("http")
 async def security_firewall_middleware(request: Request, call_next):
-    start_time = time.perf_counter()
-    src_ip = request.headers.get("x-forwarded-for") or (
+    path = request.url.path
+    # Exclude internal healthcheck, docs, and sync APIs from polluting the student traffic feed
+    if path in ("/health", "/favicon.ico", "/api/blocked", "/api/events", "/api/block", "/api/docs", "/openapi.json") or path.startswith("/api/blocked/"):
+        return await call_next(request)
+
+    ts = time.time()
+    raw_ip = request.headers.get("x-forwarded-for") or (
         request.client.host if request.client else "127.0.0.1"
     )
-    if "," in src_ip:
-        src_ip = src_ip.split(",")[0].strip()
+    src_ip = raw_ip.split(",")[0].strip() if "," in raw_ip else raw_ip.strip()
+    request.state.client_ip = src_ip
 
-    path = request.url.path
     method = request.method
     dest_host = request.headers.get("host", "student.college.edu")
     query_str = request.url.query
     user_agent = request.headers.get("user-agent", "")
     admin_token = request.headers.get("x-admin-token") or request.query_params.get("token")
 
-    # Read body safely for inspection (cache in request._body)
+    # Read body safely for inspection and cache in request.state.body
     body_bytes = await request.body()
+    request.state.body = body_bytes
     body_str = body_bytes.decode("utf-8", errors="replace")
     bytes_in = len(body_bytes)
 
@@ -143,7 +148,7 @@ async def security_firewall_middleware(request: Request, call_next):
     is_blocked, block_entry = blocklist.is_blocked(src_ip)
     if is_blocked and block_entry:
         event = {
-            "ts": time.time(),
+            "ts": ts,
             "src_ip": src_ip,
             "dst": dest_host,
             "path": path,
@@ -161,6 +166,7 @@ async def security_firewall_middleware(request: Request, call_next):
         return JSONResponse(
             status_code=403,
             content={
+                "detail": "blocked",
                 "error": "Access Denied by Application Firewall",
                 "ip": src_ip,
                 "reason": block_entry.reason,
@@ -188,7 +194,7 @@ async def security_firewall_middleware(request: Request, call_next):
         block_entry = blocklist.block_ip(src_ip, reason_text, score)
 
         event = {
-            "ts": time.time(),
+            "ts": ts,
             "src_ip": src_ip,
             "dst": dest_host,
             "path": path,
@@ -207,6 +213,7 @@ async def security_firewall_middleware(request: Request, call_next):
         return JSONResponse(
             status_code=403,
             content={
+                "detail": "blocked",
                 "error": "Forbidden - Malicious Activity Detected",
                 "ip": src_ip,
                 "reasons": reasons,
@@ -220,7 +227,7 @@ async def security_firewall_middleware(request: Request, call_next):
     is_throttled = False
     if decision == "throttle":
         is_throttled = True
-        await asyncio.sleep(0.5)  # Enforce artificial latency backpressure
+        await asyncio.sleep(0.5)
 
     # 4. EXECUTE ROUTE HANDLER
     response = await call_next(request)
@@ -234,7 +241,7 @@ async def security_firewall_middleware(request: Request, call_next):
     # Emit allow / throttle event
     bytes_out = int(response.headers.get("content-length", 500))
     event = {
-        "ts": time.time(),
+        "ts": ts,
         "src_ip": src_ip,
         "dst": dest_host,
         "path": path,
@@ -337,7 +344,11 @@ async def portal_login(
     password: str = Form(...),
 ):
     """Authenticate student. On failure, records attempt for brute-force tracking."""
-    src_ip = request.client.host if request.client else "127.0.0.1"
+    src_ip = getattr(request.state, "client_ip", None) or (
+        request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (
+            request.client.host if request.client else "127.0.0.1"
+        )
+    )
 
     if username == DEMO_CREDENTIALS["username"] and password == DEMO_CREDENTIALS["password"]:
         # Successful login -> Set session cookie

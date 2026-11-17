@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Server, ShieldAlert, ShieldCheck, Zap, Activity, ExternalLink,
-  Play, Pause, RefreshCw, Trash2, Plus, AlertTriangle, Sparkles, X, ChevronRight, Lock
+  Trash2, Plus, AlertTriangle, Sparkles, X, ChevronRight, Lock
 } from 'lucide-react';
 import {
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip
 } from 'recharts';
 
 const DECISION_BADGES = {
@@ -32,14 +32,12 @@ export default function LiveServerTab() {
   const [attackSummary, setAttackSummary] = useState({});
   const [selectedEvent, setSelectedEvent] = useState(null);
 
-  // Demo Controls State
-  const [trafficMode, setTrafficMode] = useState('mixed');
-  const [trafficRate, setTrafficRate] = useState(20);
-  const [isInjecting, setIsInjecting] = useState(false);
+  // Reviewer test action state
+  const [isTriggering, setIsTriggering] = useState(false);
   const [manualIp, setManualIp] = useState('');
   const [manualReason, setManualReason] = useState('');
 
-  // WebSocket for live server events
+  // WebSocket for live server events emitted on real HTTP requests
   useEffect(() => {
     let ws = null;
     let timer = null;
@@ -75,17 +73,30 @@ export default function LiveServerTab() {
     };
   }, []);
 
-  // Poll status, blocked list, and attack summary
+  // Poll status, blocked list, attack summary, and initial live events
   const refreshData = async () => {
     try {
-      const [sRes, bRes, aRes] = await Promise.all([
+      const [sRes, bRes, aRes, eRes] = await Promise.all([
         fetch('/api/server/status'),
         fetch('/api/server/blocked'),
         fetch('/api/server/attack-summary'),
+        fetch('/api/server/live-events'),
       ]);
       if (sRes.ok) setServerStatus(await sRes.json());
-      if (bRes.ok) setBlockedList(await bRes.json());
-      if (aRes.ok) setAttackSummary(await aRes.json());
+      if (bRes.ok) {
+        const bData = await bRes.json();
+        setBlockedList(Array.isArray(bData) ? bData : (bData.blocked || []));
+      }
+      if (aRes.ok) {
+        const aData = await aRes.json();
+        setAttackSummary(aData.summary || (Array.isArray(aData) ? {} : aData));
+      }
+      if (eRes.ok) {
+        const eData = await eRes.json();
+        const evList = Array.isArray(eData) ? eData : (eData.events || []);
+        // Seed initial history if local state is empty
+        setEvents((prev) => (prev.length === 0 ? [...evList].reverse() : prev));
+      }
     } catch (e) {}
   };
 
@@ -118,48 +129,63 @@ export default function LiveServerTab() {
     } catch (e) {}
   };
 
-  const handleTrafficControl = async (updates) => {
+  const handleClearBlocklist = async () => {
     try {
-      const payload = {
-        mode: updates.mode || trafficMode,
-        pkts_per_sec: updates.rate || trafficRate,
-        inject_attack: updates.inject_attack || false,
-        clear_blocklist: updates.clear_blocklist || false,
-      };
-      if (updates.inject_attack) setIsInjecting(true);
-      await fetch('/api/server/traffic-control', {
+      await fetch('/api/server/clear-blocklist', { method: 'POST' });
+      refreshData();
+    } catch (e) {}
+  };
+
+  // Optional reviewer action: dispatches a REAL HTTP request to the running portal honeypot
+  const handleTriggerSuspicious = async (probeType = 'admin_honeypot') => {
+    setIsTriggering(true);
+    try {
+      await fetch('/api/server/trigger-suspicious-request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ probe_type: probeType }),
       });
-      if (updates.inject_attack) setTimeout(() => setIsInjecting(false), 1500);
-      refreshData();
+      setTimeout(() => {
+        setIsTriggering(false);
+        refreshData();
+      }, 800);
     } catch (e) {
-      setIsInjecting(false);
+      setIsTriggering(false);
     }
   };
 
-  // Format Chart Data
-  const chartData = Object.entries(attackSummary).map(([name, count]) => ({
-    name,
-    count,
-    fill: SIGNATURE_COLORS[name] || '#64748b',
-  }));
+  // Format Chart Data from real events only
+  const chartData = Object.entries(attackSummary || {})
+    .filter(([_, count]) => count > 0)
+    .map(([name, count]) => ({
+      name,
+      count,
+      fill: SIGNATURE_COLORS[name] || '#64748b',
+    }));
+
+  const isDemoOnline = serverStatus?.demo_server?.online ?? false;
+  const portalUrl = serverStatus?.demo_server?.url || 'http://localhost:8001';
 
   return (
     <div className="space-y-5">
-      {/* 4.1 Connection Status Banner */}
+      {/* 4.1 Connection Status Banner — True Liveness Only */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Demo Server */}
         <div className="bg-[#101728] border border-[#1e2a44] rounded-xl p-4 flex items-center justify-between">
           <div>
             <span className="text-[10px] font-mono uppercase text-gray-400 block">Target Application</span>
             <div className="flex items-center space-x-2 mt-1">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#10b981]" />
+              <span
+                className={`w-2.5 h-2.5 rounded-full ${
+                  isDemoOnline
+                    ? 'bg-emerald-400 shadow-[0_0_8px_#10b981]'
+                    : 'bg-rose-500 shadow-[0_0_8px_#ef4444]'
+                }`}
+              />
               <h4 className="font-bold text-sm text-white font-mono">student.college.edu</h4>
             </div>
             <p className="text-[11px] text-gray-500 mt-1 font-mono">
-              Port :8001 · Uptime: {serverStatus?.demo_server?.uptime_sec || 0}s
+              Port :8001 · {isDemoOnline ? `Uptime: ${serverStatus?.demo_server?.uptime_sec || 0}s` : '🔴 OFFLINE'}
             </p>
           </div>
           <div className="w-9 h-9 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
@@ -189,7 +215,13 @@ export default function LiveServerTab() {
           <div>
             <span className="text-[10px] font-mono uppercase text-gray-400 block">Capture Sniffer</span>
             <div className="flex items-center space-x-2 mt-1">
-              <span className={`w-2.5 h-2.5 rounded-full ${serverStatus?.agent?.online ? 'bg-emerald-400 shadow-[0_0_8px_#10b981]' : 'bg-amber-400'}`} />
+              <span
+                className={`w-2.5 h-2.5 rounded-full ${
+                  serverStatus?.agent?.online
+                    ? 'bg-emerald-400 shadow-[0_0_8px_#10b981]'
+                    : 'bg-amber-400'
+                }`}
+              />
               <h4 className="font-bold text-sm text-white font-mono">
                 {serverStatus?.agent?.online ? 'ONLINE & SNIFFING' : 'AGENT STANDBY'}
               </h4>
@@ -234,39 +266,39 @@ export default function LiveServerTab() {
                 Live Ingress Request Stream & Defense Engine
               </h3>
               <span className="text-[10px] text-gray-500 font-normal">
-                ({events.length} records)
+                ({events.length} records · real requests only)
               </span>
             </div>
             <a
-              href="http://localhost:8001"
+              href={portalUrl}
               target="_blank"
               rel="noreferrer"
               className="flex items-center space-x-1.5 px-3 py-1 rounded-lg bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 text-xs font-mono hover:bg-cyan-500/20 transition-colors"
             >
-              <span>Open Student Portal</span>
+              <span>Open Student Portal →</span>
               <ExternalLink className="w-3 h-3" />
             </a>
           </div>
 
           <div className="flex-1 overflow-auto">
-            <table className="w-full text-left font-mono text-xs">
-              <thead className="bg-[#0b101c] text-gray-400 uppercase text-[10px] sticky top-0 z-10 border-b border-[#1b253b]">
-                <tr>
-                  <th className="px-3.5 py-2">Time</th>
-                  <th className="px-3.5 py-2">Source IP</th>
-                  <th className="px-3.5 py-2">Method</th>
-                  <th className="px-3.5 py-2">Path</th>
-                  <th className="px-3.5 py-2">Decision</th>
-                  <th className="px-3.5 py-2">Score</th>
-                  <th className="px-3.5 py-2">Reasons / Rule Triggered</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#182339]">
-                {events.length > 0 ? (
-                  events.map((evt, idx) => {
+            {events.length > 0 ? (
+              <table className="w-full text-left font-mono text-xs">
+                <thead className="bg-[#0b101c] text-gray-400 uppercase text-[10px] sticky top-0 z-10 border-b border-[#1b253b]">
+                  <tr>
+                    <th className="px-3.5 py-2">Time</th>
+                    <th className="px-3.5 py-2">Source IP</th>
+                    <th className="px-3.5 py-2">Method</th>
+                    <th className="px-3.5 py-2">Path</th>
+                    <th className="px-3.5 py-2">Decision</th>
+                    <th className="px-3.5 py-2">Score</th>
+                    <th className="px-3.5 py-2">Reasons / Rule Triggered</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#182339]">
+                  {events.map((evt, idx) => {
                     const isBlock = evt.decision === 'block';
                     const isThrottle = evt.decision === 'throttle';
-                    const timeStr = new Date(evt.ts * 1000).toLocaleTimeString();
+                    const timeStr = evt.ts ? new Date(evt.ts * 1000).toLocaleTimeString() : '—';
                     return (
                       <tr
                         key={`${evt.ts}-${idx}`}
@@ -284,13 +316,17 @@ export default function LiveServerTab() {
                         <td className="px-3.5 py-2 text-gray-400 whitespace-nowrap">{evt.method}</td>
                         <td className="px-3.5 py-2 text-cyan-300 whitespace-nowrap truncate max-w-[140px]">{evt.path}</td>
                         <td className="px-3.5 py-2 whitespace-nowrap">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase ${DECISION_BADGES[evt.decision] || DECISION_BADGES.allow}`}>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase ${
+                              DECISION_BADGES[evt.decision] || DECISION_BADGES.allow
+                            }`}
+                          >
                             {evt.decision}
                           </span>
                         </td>
                         <td className="px-3.5 py-2 font-bold whitespace-nowrap">
                           <span className={isBlock ? 'text-rose-400' : isThrottle ? 'text-amber-400' : 'text-gray-400'}>
-                            {evt.score?.toFixed(2)}
+                            {evt.score !== undefined ? evt.score.toFixed(2) : '0.00'}
                           </span>
                         </td>
                         <td className="px-3.5 py-2 text-gray-300 text-[11px] truncate max-w-[200px]">
@@ -298,16 +334,33 @@ export default function LiveServerTab() {
                         </td>
                       </tr>
                     );
-                  })
-                ) : (
-                  <tr>
-                    <td colSpan={7} className="py-16 text-center text-gray-500 font-mono">
-                      Awaiting live traffic from traffic generator...
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                  })}
+                </tbody>
+              </table>
+            ) : (
+              /* Honest Empty State (RULE 3) */
+              <div className="h-full flex flex-col items-center justify-center p-8 text-center font-mono">
+                <div className="w-14 h-14 rounded-2xl bg-[#141e33] border border-[#23314f] flex items-center justify-center text-cyan-400 mb-4 shadow-lg">
+                  <Server className="w-7 h-7" />
+                </div>
+                <h4 className="text-sm font-bold text-gray-200 mb-1">
+                  No requests yet. Open the Student Portal and interact with it to see live traffic.
+                </h4>
+                <p className="text-xs text-gray-500 max-w-md mb-5 leading-relaxed">
+                  Every page visit, form submission, or probe you make in the portal is intercepted by the ASGI
+                  firewall middleware and streamed here in real time.
+                </p>
+                <a
+                  href={portalUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-xs shadow-[0_0_15px_rgba(6,182,212,0.3)] transition-all"
+                >
+                  <span>Open Student Portal →</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </div>
+            )}
           </div>
 
           {/* Event Inspector Drawer */}
@@ -317,7 +370,11 @@ export default function LiveServerTab() {
                 <div className="flex items-center space-x-2">
                   <span className="text-cyan-400 font-bold uppercase">Decision Inspector</span>
                   <span className="text-gray-500">|</span>
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase ${DECISION_BADGES[selectedEvent.decision]}`}>
+                  <span
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase ${
+                      DECISION_BADGES[selectedEvent.decision]
+                    }`}
+                  >
                     {selectedEvent.decision}
                   </span>
                   <span className="text-gray-400">IP: {selectedEvent.src_ip}</span>
@@ -351,7 +408,7 @@ export default function LiveServerTab() {
 
         {/* Right Column: 4.3 Attack Activity Chart + 4.4 Blocklist Panel */}
         <div className="space-y-5 flex flex-col justify-between">
-          {/* 4.3 Attack Activity Chart */}
+          {/* 4.3 Attack Activity Chart (Real Attacks Only) */}
           <div className="bg-[#101728] border border-[#1e2a44] rounded-xl p-4">
             <h4 className="text-xs font-mono uppercase text-gray-300 font-semibold tracking-wider mb-2 flex items-center justify-between">
               <span>Attack Activity (Rolling 15m)</span>
@@ -382,8 +439,11 @@ export default function LiveServerTab() {
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="h-full flex items-center justify-center text-xs text-gray-500 font-mono">
-                  No attack signatures detected in window.
+                <div className="h-full flex flex-col items-center justify-center text-xs text-gray-500 font-mono text-center px-4">
+                  <span>No security anomalies detected yet.</span>
+                  <span className="text-[10px] text-gray-600 mt-1">
+                    Real attack attempts against the student portal will render here.
+                  </span>
                 </div>
               )}
             </div>
@@ -431,7 +491,7 @@ export default function LiveServerTab() {
                   ) : (
                     <tr>
                       <td colSpan={4} className="py-6 text-center text-gray-500 text-xs">
-                        Blocklist is empty (No blocked IPs).
+                        Blocklist is empty. No active IP bans.
                       </td>
                     </tr>
                   )}
@@ -460,75 +520,32 @@ export default function LiveServerTab() {
         </div>
       </div>
 
-      {/* 4.6 Demo Controls Toolbar */}
+      {/* 4.5 Real-Request Verification Toolbar (Replaces old generator controls) */}
       <div className="bg-[#101728] border border-[#1e2a44] rounded-xl p-4 flex flex-wrap items-center justify-between gap-4 font-mono text-xs">
-        <div className="flex items-center space-x-4">
-          <span className="text-gray-400 uppercase text-[11px] font-bold">Simulator Controls:</span>
-          {/* Traffic Mode Toggle */}
-          <div className="flex rounded-lg overflow-hidden border border-[#23314f]">
-            <button
-              onClick={() => {
-                setTrafficMode('benign');
-                handleTrafficControl({ mode: 'benign' });
-              }}
-              className={`px-3 py-1 text-xs transition-colors ${
-                trafficMode === 'benign' ? 'bg-cyan-500 text-black font-bold' : 'bg-[#151f33] text-gray-400'
-              }`}
-            >
-              Benign (100% Students)
-            </button>
-            <button
-              onClick={() => {
-                setTrafficMode('mixed');
-                handleTrafficControl({ mode: 'mixed' });
-              }}
-              className={`px-3 py-1 text-xs transition-colors ${
-                trafficMode === 'mixed' ? 'bg-rose-500 text-white font-bold' : 'bg-[#151f33] text-gray-400'
-              }`}
-            >
-              Mixed (80% Benign + 20% Attacks)
-            </button>
-          </div>
-
-          {/* Rate Selector */}
-          <div className="flex items-center space-x-2">
-            <span className="text-gray-500 text-[11px]">Rate:</span>
-            {[10, 20, 50, 100].map((rate) => (
-              <button
-                key={rate}
-                onClick={() => {
-                  setTrafficRate(rate);
-                  handleTrafficControl({ rate });
-                }}
-                className={`px-2 py-0.5 rounded text-xs border ${
-                  trafficRate === rate
-                    ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40 font-bold'
-                    : 'bg-[#151f33] text-gray-400 border-[#23314f]'
-                }`}
-              >
-                {rate} req/s
-              </button>
-            ))}
-          </div>
+        <div className="flex items-center space-x-2 text-gray-400 text-[11px]">
+          <span className="w-2 h-2 rounded-full bg-emerald-400" />
+          <span className="font-bold text-gray-300 uppercase">Real-Request-Only Mode:</span>
+          <span>Traffic is produced strictly by live interactions with the student portal.</span>
         </div>
 
-        {/* Action Buttons */}
+        {/* Reviewer Action Buttons */}
         <div className="flex items-center space-x-2.5">
           <button
-            onClick={() => handleTrafficControl({ inject_attack: true })}
-            disabled={isInjecting}
+            onClick={() => handleTriggerSuspicious('admin_honeypot')}
+            disabled={isTriggering}
             className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border font-bold text-xs transition-all ${
-              isInjecting
-                ? 'bg-rose-600 text-white animate-bounce'
+              isTriggering
+                ? 'bg-rose-600 text-white animate-pulse'
                 : 'bg-rose-500/20 text-rose-400 border-rose-500/40 hover:bg-rose-500/30'
             }`}
+            title="Issues a real HTTP GET /admin request through the ASGI security middleware"
           >
             <AlertTriangle className="w-3.5 h-3.5" />
-            <span>{isInjecting ? 'Injecting Attack...' : '⚡ Inject Test Attack'}</span>
+            <span>{isTriggering ? 'Sending real HTTP probe...' : '⚡ Try a suspicious request'}</span>
           </button>
 
           <button
-            onClick={() => handleTrafficControl({ clear_blocklist: true })}
+            onClick={handleClearBlocklist}
             className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 text-xs transition-colors"
           >
             <Trash2 className="w-3.5 h-3.5" />

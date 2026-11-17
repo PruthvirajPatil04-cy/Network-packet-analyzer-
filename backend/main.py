@@ -14,6 +14,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import List, Optional, Dict, Any, Set
 from collections import deque, Counter
+import httpx
 
 from fastapi import (
     FastAPI, WebSocket, WebSocketDisconnect, HTTPException,
@@ -51,7 +52,6 @@ from backend.models import (
 from backend.stream import StreamManager
 from backend.antigravity.soc_server_agent import soc_server_agent
 from demo_server.blocklist import blocklist
-from demo_server.traffic_gen import generator as traffic_generator
 
 # Configure logging
 logging.basicConfig(
@@ -243,18 +243,32 @@ async def post_alert(
 async def get_server_status():
     """
     Returns connection status across the demo server, stream, capture agent, and WebSocket hub.
+    Reflects true live status only: demo_server is marked offline if it fails to respond to /health.
     """
     now = time.time()
     agent_age = round(now - _last_agent_packet_time, 1)
     is_agent_online = agent_age < 15.0
 
+    demo_url = os.environ.get("DEMO_SERVER_URL", "http://127.0.0.1:8001")
+    demo_online = False
+    demo_uptime = 0
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(f"{demo_url}/health")
+            if resp.status_code == 200:
+                demo_online = True
+                hdata = resp.json()
+                demo_uptime = hdata.get("uptime_seconds", int(now - stream_manager.boot_time))
+    except Exception:
+        demo_online = False
+
     return {
         "demo_server": {
-            "online": True,
-            "uptime_sec": int(now - stream_manager.boot_time),
+            "online": demo_online,
+            "uptime_sec": demo_uptime,
             "version": "1.0.0",
             "domain": "student.college.edu",
-            "url": os.environ.get("DEMO_SERVER_URL", "http://localhost:8001"),
+            "url": demo_url,
         },
         "stream": {
             "connected": True,
@@ -280,7 +294,8 @@ async def get_server_status():
 @app.get("/api/server/live-events", tags=["Live Server"])
 async def get_live_server_events(limit: int = 200):
     """Fetch recent allow/throttle/block decisions for the live request table."""
-    return list(_server_events)[-limit:]
+    events = list(_server_events)[-limit:]
+    return {"events": events, "count": len(events)}
 
 
 @app.post("/api/server/event-ingest", status_code=status.HTTP_202_ACCEPTED, tags=["Live Server"])
@@ -336,7 +351,8 @@ async def ingest_server_event(
 @app.get("/api/server/blocked", tags=["Live Server"])
 async def get_blocked_ips():
     """Fetch all active application firewall blocked entries with TTLs."""
-    return blocklist.get_all()
+    blocked = blocklist.get_all()
+    return {"blocked": blocked, "count": len(blocked)}
 
 
 @app.delete("/api/server/blocked/{ip}", tags=["Live Server"])
@@ -401,45 +417,55 @@ async def get_attack_summary():
             else:
                 counts["Other Violation"] += 1
 
-    return dict(counts)
+    return {"summary": dict(counts), "window_sec": 900}
 
 
-@app.post("/api/server/traffic-control", tags=["Live Server"])
-async def control_traffic_generator(payload: Dict[str, Any]):
+@app.post("/api/server/clear-blocklist", tags=["Live Server"])
+async def clear_blocklist():
+    """Clear all entries from the blocklist."""
+    blocklist.clear()
+    DEMO_SERVER_BLOCKED_IPS.set(0)
+    try:
+        async with httpx.AsyncClient(timeout=1.0) as client:
+            # Recreate an empty blocklist on demo server if needed
+            pass
+    except Exception:
+        pass
+    return {"status": "cleared", "blocked_count": 0}
+
+
+@app.post("/api/server/trigger-suspicious-request", tags=["Live Server"])
+async def trigger_suspicious_request(payload: Optional[Dict[str, Any]] = None):
     """
-    Control synthetic traffic simulation: toggle mode (benign/mixed),
-    rate (pkts/sec), inject on-demand test attacks, or clear blocklist.
+    Convenience endpoint for reviewer testing: issues an actual HTTP request
+    to the running student portal's honeypot route (/admin).
+    The request flows through the demo server's security middleware,
+    evaluating, scoring, blocking, and emitting an event just like any real user.
     """
-    mode = payload.get("mode")
-    if mode in ("benign", "mixed"):
-        traffic_generator.mode = mode
+    demo_url = os.environ.get("DEMO_SERVER_URL", "http://localhost:8001").rstrip("/")
+    probe_type = (payload or {}).get("probe_type", "admin_honeypot")
 
-    rate = payload.get("pkts_per_sec")
-    if rate:
-        traffic_generator.pkts_per_sec = max(1, min(500, int(rate)))
-
-    attack_results = []
-    if payload.get("inject_attack"):
-        attack_results = traffic_generator.inject_test_attack()
-
-    if payload.get("clear_blocklist"):
-        blocklist.clear()
-        DEMO_SERVER_BLOCKED_IPS.set(0)
-
-    return {
-        "status": "updated",
-        "current_mode": traffic_generator.mode,
-        "current_rate": traffic_generator.pkts_per_sec,
-        "attacks_injected": attack_results,
-        "blocked_count": blocklist.count(),
-    }
-
-
-@app.post("/api/server/traffic-control/inject-attack", tags=["Live Server"])
-async def inject_attack_endpoint(attack_type: Optional[str] = None):
-    """Convenience endpoint to inject an on-demand synthetic attack."""
-    results = traffic_generator.inject_test_attack()
-    return {"status": "injected", "attack_type": attack_type or "suite", "results": results}
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        try:
+            if probe_type == "sqli":
+                resp = await client.post(
+                    f"{demo_url}/login",
+                    data={"username": "admin' OR '1'='1", "password": "wrongpassword"},
+                    headers={"User-Agent": "Mozilla/5.0 (Reviewer-SQLiProbe)"}
+                )
+            else:
+                resp = await client.get(
+                    f"{demo_url}/admin",
+                    headers={"User-Agent": "Mozilla/5.0 (Reviewer-HoneypotProbe)"}
+                )
+            return {
+                "status": "sent",
+                "target": f"{demo_url}/admin" if probe_type != "sqli" else f"{demo_url}/login",
+                "http_status": resp.status_code,
+                "note": "Real HTTP request dispatched to student portal through ASGI middleware"
+            }
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Failed to reach student portal: {e}")
 
 
 # --- WebSocket Feeds ---

@@ -113,24 +113,6 @@ services:
       - demo-net
       - packet-net
 
-  # --- Safe Local Traffic Generator ---
-  traffic-gen:
-    build:
-      context: .
-      dockerfile: agent/Dockerfile
-    container_name: packet-analyzer-traffic-gen
-    restart: unless-stopped
-    environment:
-      - DEMO_SERVER_URL=http://demo-server:8001
-      - TRAFFIC_MODE=mixed
-      - PKTS_PER_SEC=20
-    command: ["python", "-m", "demo_server.traffic_gen"]
-    depends_on:
-      demo-server:
-        condition: service_healthy
-    networks:
-      - demo-net
-
   # --- React + Vite Dashboard (Nginx) ---
   frontend:
     build:
