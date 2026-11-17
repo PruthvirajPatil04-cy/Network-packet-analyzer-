@@ -206,7 +206,9 @@ async def websocket_packet_feed(websocket: WebSocket):
 # --- Static Frontend Mount (if built) ---
 frontend_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
 if os.path.exists(frontend_dist):
-    app.mount("/static", StaticFiles(directory=frontend_dist), name="static")
+    assets_dir = os.path.join(frontend_dist, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
     @app.get("/")
     async def serve_index():
