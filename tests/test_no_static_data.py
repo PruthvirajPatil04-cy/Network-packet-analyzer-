@@ -56,3 +56,40 @@ def test_no_banned_static_data_terms():
                 pass
 
     assert not violations, f"Found banned static traffic symbols:\n" + "\n".join(violations)
+
+
+def test_no_hardcoded_students_roster_in_main():
+    """Ensure STUDENTS = [ is NOT hardcoded in demo_server/main.py (must be loaded from seed/students.json)."""
+    main_py = os.path.join(REPO_ROOT, "demo_server", "main.py")
+    with open(main_py, "r", encoding="utf-8") as f:
+        content = f.read()
+    assert "STUDENTS = [" not in content, "demo_server/main.py must NOT hardcode STUDENTS = [; load from seed/students.json!"
+
+
+def test_plaintext_passwords_allowlist():
+    """
+    Ensure plaintext demo passwords live only in allowed reference files:
+    docs/DEMO_CREDENTIALS.md, demo_server/seed/hash_passwords.py,
+    demo_server/templates/login.html, and tests/test_students.py.
+    Never inside main.py, threat_engine.py, or backend.
+    """
+    allowed_files = {
+        os.path.normpath(os.path.join("docs", "DEMO_CREDENTIALS.md")),
+        os.path.normpath(os.path.join("demo_server", "seed", "hash_passwords.py")),
+        os.path.normpath(os.path.join("demo_server", "templates", "login.html")),
+        os.path.normpath(os.path.join("tests", "test_students.py")),
+        os.path.normpath(os.path.join("tests", "test_no_static_data.py")),
+    }
+    sample_pw = "Aarav@2024"
+    for root, dirs, files in os.walk(REPO_ROOT):
+        dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+        for file in files:
+            if not file.endswith((".py", ".json")):
+                continue
+            fpath = os.path.relpath(os.path.join(root, file), REPO_ROOT)
+            if os.path.normpath(fpath) in allowed_files:
+                continue
+            with open(os.path.join(root, file), "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+                assert sample_pw not in content, f"Plaintext demo password found in forbidden file: {fpath}!"
+

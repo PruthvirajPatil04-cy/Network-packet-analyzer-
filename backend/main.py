@@ -489,6 +489,41 @@ async def clear_blocklist():
     return {"status": "cleared", "blocked_count": 0}
 
 
+@app.get("/api/server/demo-accounts", tags=["Live Server"])
+async def get_demo_accounts_proxy():
+    """
+    Fetch sanitized student roster for Live Server tab demo accounts drawer and student filter.
+    Contains no plaintext passwords or password hashes.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get("http://localhost:8001/api/server/demo-accounts")
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception:
+        pass
+
+    # Fallback to local seed file if demo server is starting up
+    seed_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "demo_server", "seed", "students.json")
+    if os.path.exists(seed_path):
+        with open(seed_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        sanitized = [
+            {
+                "roll": s["roll"],
+                "name": s["name"],
+                "program": s["program"],
+                "year": s["year"],
+                "email": s["email"],
+                "section": s.get("section", "A"),
+                "enrolled_count": len(s.get("enrolled", [])),
+            }
+            for s in data
+        ]
+        return {"accounts": sanitized, "count": len(sanitized)}
+    return {"accounts": [], "count": 0}
+
+
 @app.post("/api/server/trigger-suspicious-request", tags=["Live Server"])
 async def trigger_suspicious_request(payload: Optional[Dict[str, Any]] = None):
     """

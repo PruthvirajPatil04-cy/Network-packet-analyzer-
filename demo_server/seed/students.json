@@ -1,0 +1,182 @@
+[
+  {
+    "roll": "CS22B001",
+    "name": "Aarav Sharma",
+    "program": "B.Tech CSE",
+    "year": 3,
+    "email": "aarav.sharma@college.edu",
+    "password_hash": "$2b$12$L8JUEerggt62BcIaZKi4Cul9Hlh./O1evGFWwdUfiuT5FgY3NUPDC",
+    "section": "A",
+    "enrolled": [
+      "CS301 DBMS",
+      "CS302 OS",
+      "CS303 Networks",
+      "CS304 DSA"
+    ],
+    "cgpa": 8.6,
+    "fee_status": "Paid",
+    "fee_due": 0
+  },
+  {
+    "roll": "CS22B002",
+    "name": "Priya Nair",
+    "program": "B.Tech CSE",
+    "year": 3,
+    "email": "priya.nair@college.edu",
+    "password_hash": "$2b$12$OMDV.fvU8r5hssQf6dBBFu1GFnfRMFHzl/oGia/yf1c1ktJun1T/K",
+    "section": "A",
+    "enrolled": [
+      "CS301 DBMS",
+      "CS302 OS",
+      "CS303 Networks",
+      "HS301 Ethics"
+    ],
+    "cgpa": 9.1,
+    "fee_status": "Paid",
+    "fee_due": 0
+  },
+  {
+    "roll": "CS22B003",
+    "name": "Rohan Mehta",
+    "program": "B.Tech CSE",
+    "year": 3,
+    "email": "rohan.mehta@college.edu",
+    "password_hash": "$2b$12$Kuifvb3NUWr0dyaapYRWo.1a9z/b1/ZGuoqzaxxjo205xgrF.GVoy",
+    "section": "B",
+    "enrolled": [
+      "CS301 DBMS",
+      "CS303 Networks",
+      "CS305 AI",
+      "CS306 Cloud"
+    ],
+    "cgpa": 7.8,
+    "fee_status": "Partial",
+    "fee_due": 15000
+  },
+  {
+    "roll": "EC22B004",
+    "name": "Ananya Iyer",
+    "program": "B.Tech ECE",
+    "year": 3,
+    "email": "ananya.iyer@college.edu",
+    "password_hash": "$2b$12$6iOKQ8Rd7.9E9iN8hN6VIea5f578oaLbbqIgFOvotMrncJUegLvNe",
+    "section": "A",
+    "enrolled": [
+      "EC301 DSP",
+      "EC302 VLSI",
+      "EC303 Signals",
+      "MA301 Prob"
+    ],
+    "cgpa": 8.9,
+    "fee_status": "Paid",
+    "fee_due": 0
+  },
+  {
+    "roll": "EC22B005",
+    "name": "Vikram Reddy",
+    "program": "B.Tech ECE",
+    "year": 3,
+    "email": "vikram.reddy@college.edu",
+    "password_hash": "$2b$12$ye2PWVeJJqrMERuuCMmcFe271SpWqVhNUVlCVZr0lzX.iyqdHwaIW",
+    "section": "A",
+    "enrolled": [
+      "EC301 DSP",
+      "EC302 VLSI",
+      "EC304 Embedded",
+      "MA301 Prob"
+    ],
+    "cgpa": 8.2,
+    "fee_status": "Paid",
+    "fee_due": 0
+  },
+  {
+    "roll": "ME22B006",
+    "name": "Sneha Kulkarni",
+    "program": "B.Tech Mech",
+    "year": 3,
+    "email": "sneha.kulkarni@college.edu",
+    "password_hash": "$2b$12$3ZMk2OnE.RiL6J6S0AMLSuqPgKxECDpKJ1nheahc4gp1j0bqe/lfm",
+    "section": "A",
+    "enrolled": [
+      "ME301 Thermo",
+      "ME302 FM",
+      "ME303 Machine Design",
+      "MA302 Num"
+    ],
+    "cgpa": 8.4,
+    "fee_status": "Paid",
+    "fee_due": 0
+  },
+  {
+    "roll": "ME22B007",
+    "name": "Karthik Rao",
+    "program": "B.Tech Mech",
+    "year": 3,
+    "email": "karthik.rao@college.edu",
+    "password_hash": "$2b$12$Esb1Jil6KouGrdHH3hEAKOo0Y9dK.D0Icg6pRerZKCP3h10uaUW5u",
+    "section": "B",
+    "enrolled": [
+      "ME301 Thermo",
+      "ME302 FM",
+      "ME304 CAD",
+      "MA302 Num"
+    ],
+    "cgpa": 7.5,
+    "fee_status": "Partial",
+    "fee_due": 22000
+  },
+  {
+    "roll": "CS21B008",
+    "name": "Isha Patel",
+    "program": "B.Tech CSE",
+    "year": 4,
+    "email": "isha.patel@college.edu",
+    "password_hash": "$2b$12$Z6L7VZaDe.CxyQesHXFSCO7wHBi7KLu.K78.Tnz4/IjbKh3alPKBO",
+    "section": "A",
+    "enrolled": [
+      "CS401 ML",
+      "CS402 Compilers",
+      "CS403 Security",
+      "CS404 Capstone"
+    ],
+    "cgpa": 9.3,
+    "fee_status": "Paid",
+    "fee_due": 0
+  },
+  {
+    "roll": "CS21B009",
+    "name": "Aditya Verma",
+    "program": "B.Tech CSE",
+    "year": 4,
+    "email": "aditya.verma@college.edu",
+    "password_hash": "$2b$12$utWOCOZvw1U4hNvfERNq8O5MPvgRrD3hN2jMqZSw3NmbcBeY1yvHe",
+    "section": "A",
+    "enrolled": [
+      "CS401 ML",
+      "CS402 Compilers",
+      "CS403 Security",
+      "CS405 Blockchain"
+    ],
+    "cgpa": 8.7,
+    "fee_status": "Unpaid",
+    "fee_due": 45000
+  },
+  {
+    "roll": "EE22B010",
+    "name": "Meera Joshi",
+    "program": "B.Tech EEE",
+    "year": 3,
+    "email": "meera.joshi@college.edu",
+    "password_hash": "$2b$12$XqtEZJwqcBmIL1Bj2BMfNeOTl94QF5JtBHLau3LiHv7N0nzE3oeK2",
+    "section": "A",
+    "enrolled": [
+      "EE301 Power Sys",
+      "EE302 Control",
+      "EE303 Machines",
+      "MA301 Prob"
+    ],
+    "cgpa": 8.1,
+    "fee_status": "Paid",
+    "fee_due": 0
+  }
+]

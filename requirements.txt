@@ -14,6 +14,8 @@ websockets>=12.0
 httpx>=0.27.0
 redis>=5.0.0
 jinja2>=3.1.0
+bcrypt>=4.0.0
+pyjwt>=2.8.0
 
 # Observability & Metrics
 prometheus-client>=0.20.0

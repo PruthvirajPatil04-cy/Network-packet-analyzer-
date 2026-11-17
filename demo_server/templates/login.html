@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Student Portal — Login | Apex University</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: #0b1120; color: #f1f5f9; min-height: 100vh; display: flex; flex-direction: column; }
+    header { background: #0f172a; border-bottom: 1px solid #1e293b; padding: 16px 28px; display: flex; justify-content: space-between; align-items: center; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; color: #38bdf8; }
+    .badge { background: #0284c7; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-family: monospace; }
+    .container { max-width: 680px; margin: 40px auto; padding: 0 20px; flex: 1; width: 100%; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 28px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.4); }
+    h2 { font-size: 20px; margin-bottom: 6px; color: #f8fafc; }
+    .subtitle { font-size: 13px; color: #94a3b8; margin-bottom: 20px; }
+    .form-group { margin-bottom: 18px; }
+    label { display: block; font-size: 12px; text-transform: uppercase; color: #94a3b8; margin-bottom: 6px; font-family: monospace; font-weight: 600; }
+    input { width: 100%; padding: 11px 14px; background: #0f172a; border: 1px solid #334155; border-radius: 6px; color: white; font-size: 14px; transition: border-color 0.2s; }
+    input:focus { outline: none; border-color: #38bdf8; box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2); }
+    button { background: #0284c7; color: white; border: none; padding: 12px 20px; border-radius: 6px; font-weight: 600; cursor: pointer; transition: background 0.2s; width: 100%; font-size: 14px; }
+    button:hover { background: #0369a1; }
+    .error-box { background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); padding: 12px; border-radius: 6px; font-size: 13px; color: #fca5a5; margin-bottom: 18px; }
+    
+    /* Collapsible demo credentials box */
+    .demo-creds-container { margin-top: 24px; border-top: 1px solid #334155; padding-top: 20px; }
+    .demo-disclaimer { font-size: 12px; color: #94a3b8; margin-bottom: 10px; font-style: italic; }
+    details { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 12px 16px; font-size: 12px; }
+    summary { cursor: pointer; color: #38bdf8; font-weight: 600; font-family: monospace; outline: none; user-select: none; }
+    summary:hover { color: #7dd3fc; }
+    .creds-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 12px; }
+    .creds-table th, .creds-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #1e293b; }
+    .creds-table th { color: #94a3b8; font-family: monospace; font-size: 11px; text-transform: uppercase; background: #0b1120; }
+    .creds-table tr:hover { background: #162032; }
+    .creds-table code { font-family: monospace; color: #38bdf8; background: #1e293b; padding: 2px 6px; border-radius: 4px; }
+    .fill-btn { background: #1e293b; border: 1px solid #475569; color: #94a3b8; font-size: 11px; padding: 3px 8px; border-radius: 4px; cursor: pointer; width: auto; font-family: monospace; }
+    .fill-btn:hover { background: #334155; color: #f1f5f9; border-color: #38bdf8; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">🎓 Apex University <span class="badge">student.college.edu</span></div>
+    <div style="font-size: 12px; font-family: monospace; color: #94a3b8;">Academic Year 2025–2026</div>
+  </header>
+
+  <div class="container">
+    <div class="card">
+      <h2>Student Portal Sign In</h2>
+      <p class="subtitle">Access course registration, grades, transcripts, and financial records.</p>
+
+      {% if error %}
+      <div class="error-box">
+        ⚠️ {{ error }}
+      </div>
+      {% endif %}
+
+      <form action="/login" method="POST">
+        <div class="form-group">
+          <label for="roll-input">Roll Number</label>
+          <input type="text" id="roll-input" name="roll" placeholder="e.g. CS22B001" required autofocus />
+        </div>
+        <div class="form-group">
+          <label for="pass-input">Password</label>
+          <input type="password" id="pass-input" name="password" placeholder="••••••••" required />
+        </div>
+        <button type="submit">Sign In to Student Portal</button>
+      </form>
+
+      <!-- Phase 2.1 Demo Credentials Visibility (in-page, collapsible) -->
+      <div class="demo-creds-container">
+        <p class="demo-disclaimer">
+          Demo accounts — for evaluation only. Never use these patterns in production.
+        </p>
+        <details>
+          <summary>Demo credentials (click to expand)</summary>
+          <table class="creds-table">
+            <thead>
+              <tr>
+                <th>Roll No.</th>
+                <th>Name</th>
+                <th>Program</th>
+                <th>Password</th>
+                <th>Quick Fill</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>CS22B001</code></td>
+                <td>Aarav Sharma</td>
+                <td>B.Tech CSE (Yr 3)</td>
+                <td><code>Aarav@2024</code></td>
+                <td><button type="button" class="fill-btn" onclick="fillForm('CS22B001', 'Aarav@2024')">Use</button></td>
+              </tr>
+              <tr>
+                <td><code>CS22B002</code></td>
+                <td>Priya Nair</td>
+                <td>B.Tech CSE (Yr 3)</td>
+                <td><code>Priya@2024</code></td>
+                <td><button type="button" class="fill-btn" onclick="fillForm('CS22B002', 'Priya@2024')">Use</button></td>
+              </tr>
+              <tr>
+                <td><code>CS22B003</code></td>
+                <td>Rohan Mehta</td>
+                <td>B.Tech CSE (Yr 3)</td>
+                <td><code>Rohan@2024</code></td>
+                <td><button type="button" class="fill-btn" onclick="fillForm('CS22B003', 'Rohan@2024')">Use</button></td>
+              </tr>
+              <tr>
+                <td><code>EC22B004</code></td>
+                <td>Ananya Iyer</td>
+                <td>B.Tech ECE (Yr 3)</td>
+                <td><code>Ananya@2024</code></td>
+                <td><button type="button" class="fill-btn" onclick="fillForm('EC22B004', 'Ananya@2024')">Use</button></td>
+              </tr>
+              <tr>
+                <td><code>EC22B005</code></td>
+                <td>Vikram Reddy</td>
+                <td>B.Tech ECE (Yr 3)</td>
+                <td><code>Vikram@2024</code></td>
+                <td><button type="button" class="fill-btn" onclick="fillForm('EC22B005', 'Vikram@2024')">Use</button></td>
+              </tr>
+              <tr>
+                <td><code>ME22B006</code></td>
+                <td>Sneha Kulkarni</td>
+                <td>B.Tech Mech (Yr 3)</td>
+                <td><code>Sneha@2024</code></td>
+                <td><button type="button" class="fill-btn" onclick="fillForm('ME22B006', 'Sneha@2024')">Use</button></td>
+              </tr>
+              <tr>
+                <td><code>ME22B007</code></td>
+                <td>Karthik Rao</td>
+                <td>B.Tech Mech (Yr 3)</td>
+                <td><code>Karthik@2024</code></td>
+                <td><button type="button" class="fill-btn" onclick="fillForm('ME22B007', 'Karthik@2024')">Use</button></td>
+              </tr>
+              <tr>
+                <td><code>CS21B008</code></td>
+                <td>Isha Patel</td>
+                <td>B.Tech CSE (Yr 4)</td>
+                <td><code>Isha@2024</code></td>
+                <td><button type="button" class="fill-btn" onclick="fillForm('CS21B008', 'Isha@2024')">Use</button></td>
+              </tr>
+              <tr>
+                <td><code>CS21B009</code></td>
+                <td>Aditya Verma</td>
+                <td>B.Tech CSE (Yr 4)</td>
+                <td><code>Aditya@2024</code></td>
+                <td><button type="button" class="fill-btn" onclick="fillForm('CS21B009', 'Aditya@2024')">Use</button></td>
+              </tr>
+              <tr>
+                <td><code>EE22B010</code></td>
+                <td>Meera Joshi</td>
+                <td>B.Tech EEE (Yr 3)</td>
+                <td><code>Meera@2024</code></td>
+                <td><button type="button" class="fill-btn" onclick="fillForm('EE22B010', 'Meera@2024')">Use</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </details>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function fillForm(roll, pass) {
+      document.getElementById('roll-input').value = roll;
+      document.getElementById('pass-input').value = pass;
+    }
+  </script>
+</body>
+</html>

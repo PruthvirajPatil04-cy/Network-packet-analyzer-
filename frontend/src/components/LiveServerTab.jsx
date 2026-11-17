@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
   Server, ShieldAlert, ShieldCheck, Zap, Activity, ExternalLink,
-  Trash2, Plus, AlertTriangle, Sparkles, X, ChevronRight, Lock
+  Trash2, Plus, AlertTriangle, Sparkles, X, ChevronRight, Lock,
+  Users, Copy, Check, ChevronDown
 } from 'lucide-react';
 import {
   ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, Tooltip
@@ -31,6 +32,12 @@ export default function LiveServerTab() {
   const [blockedList, setBlockedList] = useState([]);
   const [attackSummary, setAttackSummary] = useState({});
   const [selectedEvent, setSelectedEvent] = useState(null);
+
+  // Seeded Demo Accounts and Student Filtering (Phase 2 & 3)
+  const [demoAccounts, setDemoAccounts] = useState([]);
+  const [selectedStudentFilter, setSelectedStudentFilter] = useState('ALL');
+  const [isDemoAccountsOpen, setIsDemoAccountsOpen] = useState(false);
+  const [copiedRoll, setCopiedRoll] = useState(null);
 
   // Reviewer test action state
   const [isTriggering, setIsTriggering] = useState(false);
@@ -84,14 +91,15 @@ export default function LiveServerTab() {
     };
   }, []);
 
-  // Poll status, blocked list, attack summary, and live events
+  // Poll status, blocked list, attack summary, live events, and demo accounts
   const refreshData = async () => {
     try {
-      const [sRes, bRes, aRes, eRes] = await Promise.all([
+      const [sRes, bRes, aRes, eRes, accRes] = await Promise.all([
         fetch('/api/server/status'),
         fetch('/api/server/blocked'),
         fetch('/api/server/attack-summary'),
         fetch('/api/server/live-events'),
+        fetch('/api/server/demo-accounts'),
       ]);
       if (sRes.ok) setServerStatus(await sRes.json());
       if (bRes.ok) {
@@ -113,7 +121,17 @@ export default function LiveServerTab() {
           return additions.length > 0 ? [...additions, ...prev].slice(0, 200) : prev;
         });
       }
+      if (accRes && accRes.ok) {
+        const accData = await accRes.json();
+        setDemoAccounts(accData.accounts || []);
+      }
     } catch (e) {}
+  };
+
+  const handleCopyRoll = (roll) => {
+    navigator.clipboard.writeText(roll);
+    setCopiedRoll(roll);
+    setTimeout(() => setCopiedRoll(null), 1500);
   };
 
   useEffect(() => {
@@ -181,6 +199,11 @@ export default function LiveServerTab() {
 
   const isDemoOnline = serverStatus?.demo_server?.online ?? false;
   const portalUrl = serverStatus?.demo_server?.url || 'http://localhost:8001';
+
+  // Dynamic filter by authenticated student roll (Phase 3.4)
+  const filteredEvents = events.filter(
+    (evt) => selectedStudentFilter === 'ALL' || evt.roll === selectedStudentFilter
+  );
 
   return (
     <div className="space-y-5">
@@ -275,33 +298,54 @@ export default function LiveServerTab() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* 4.2 Live Request Feed */}
         <div className="lg:col-span-2 bg-[#101728] border border-[#1e2a44] rounded-xl overflow-hidden flex flex-col h-[580px]">
-          <div className="px-4 py-3 border-b border-[#1e2a44] bg-[#0d1424] flex items-center justify-between">
+          <div className="px-4 py-3 border-b border-[#1e2a44] bg-[#0d1424] flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center space-x-2 font-mono">
               <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
               <h3 className="text-xs font-bold uppercase text-gray-200 tracking-wider">
                 Live Ingress Request Stream & Defense Engine
               </h3>
               <span className="text-[10px] text-gray-500 font-normal">
-                ({events.length} records · real requests only)
+                ({filteredEvents.length} shown · real requests only)
               </span>
             </div>
-            <a
-              href={portalUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center space-x-1.5 px-3 py-1 rounded-lg bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 text-xs font-mono hover:bg-cyan-500/20 transition-colors"
-            >
-              <span>Open Student Portal →</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
+
+            <div className="flex items-center space-x-3">
+              {/* Student Filter Dropdown (Phase 3.4) */}
+              <div className="flex items-center space-x-2 font-mono">
+                <span className="text-[10px] text-gray-400 uppercase">Student:</span>
+                <select
+                  value={selectedStudentFilter}
+                  onChange={(e) => setSelectedStudentFilter(e.target.value)}
+                  className="bg-[#0b101c] border border-[#23314f] text-cyan-300 text-xs rounded px-2.5 py-1 font-mono focus:outline-none focus:border-cyan-500"
+                >
+                  <option value="ALL">All Requests ({events.length})</option>
+                  {demoAccounts.map((acc) => (
+                    <option key={acc.roll} value={acc.roll}>
+                      {acc.roll} — {acc.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <a
+                href={portalUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center space-x-1.5 px-3 py-1 rounded-lg bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 text-xs font-mono hover:bg-cyan-500/20 transition-colors"
+              >
+                <span>Open Student Portal →</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
           </div>
 
           <div className="flex-1 overflow-auto">
-            {events.length > 0 ? (
+            {filteredEvents.length > 0 ? (
               <table className="w-full text-left font-mono text-xs">
                 <thead className="bg-[#0b101c] text-gray-400 uppercase text-[10px] sticky top-0 z-10 border-b border-[#1b253b]">
                   <tr>
                     <th className="px-3.5 py-2">Time</th>
+                    <th className="px-3.5 py-2">Student</th>
                     <th className="px-3.5 py-2">Source IP</th>
                     <th className="px-3.5 py-2">Method</th>
                     <th className="px-3.5 py-2">Path</th>
@@ -311,7 +355,7 @@ export default function LiveServerTab() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#182339]">
-                  {events.map((evt, idx) => {
+                  {filteredEvents.map((evt, idx) => {
                     const isBlock = evt.decision === 'block';
                     const isThrottle = evt.decision === 'throttle';
                     const timeStr = evt.ts ? new Date(evt.ts * 1000).toLocaleTimeString() : '—';
@@ -328,6 +372,15 @@ export default function LiveServerTab() {
                         }`}
                       >
                         <td className="px-3.5 py-2 text-gray-400 text-[11px] whitespace-nowrap">{timeStr}</td>
+                        <td className="px-3.5 py-2 whitespace-nowrap">
+                          {evt.roll ? (
+                            <span className="px-1.5 py-0.5 rounded bg-cyan-950/80 text-cyan-400 border border-cyan-800/60 font-bold font-mono text-[10px]">
+                              {evt.roll}
+                            </span>
+                          ) : (
+                            <span className="text-gray-600 font-mono text-[11px]">—</span>
+                          )}
+                        </td>
                         <td className="px-3.5 py-2 text-gray-200 font-medium whitespace-nowrap">{evt.src_ip || '127.0.0.1'}</td>
                         <td className="px-3.5 py-2 text-gray-400 whitespace-nowrap">{evt.method || 'GET'}</td>
                         <td className="px-3.5 py-2 text-cyan-300 whitespace-nowrap truncate max-w-[140px]">{evt.path || '/'}</td>
@@ -534,6 +587,77 @@ export default function LiveServerTab() {
             </form>
           </div>
         </div>
+      </div>
+
+      {/* Phase 2.2 — Seeded University Demo Accounts Expander */}
+      <div className="bg-[#101728] border border-[#1e2a44] rounded-xl overflow-hidden font-mono text-xs">
+        <button
+          onClick={() => setIsDemoAccountsOpen((prev) => !prev)}
+          className="w-full px-4 py-3 bg-[#0d1424] hover:bg-[#141e33] flex items-center justify-between transition-colors border-b border-[#1e2a44]/60"
+        >
+          <div className="flex items-center space-x-2.5">
+            <Users className="w-4 h-4 text-cyan-400" />
+            <span className="font-bold uppercase text-gray-200 tracking-wider text-xs">
+              Seeded University Accounts ({demoAccounts.length} Students)
+            </span>
+            <span className="text-[10px] text-gray-500 font-normal">
+              Click to view roster & copy roll numbers for testing
+            </span>
+          </div>
+          <div className="flex items-center space-x-2 text-cyan-400 text-xs">
+            <span>{isDemoAccountsOpen ? 'Collapse' : 'Expand Roster'}</span>
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isDemoAccountsOpen ? 'rotate-180' : ''}`} />
+          </div>
+        </button>
+
+        {isDemoAccountsOpen && (
+          <div className="p-4 overflow-x-auto">
+            <p className="text-[11px] text-gray-400 mb-3 italic">
+              Demo accounts for evaluation only. Passwords follow the pattern <code>&lt;FirstName&gt;@2024</code> (e.g. <code>Aarav@2024</code>).
+            </p>
+            <table className="w-full text-left font-mono text-xs">
+              <thead className="bg-[#0b101c] text-gray-400 text-[10px] uppercase border-b border-[#1b253b]">
+                <tr>
+                  <th className="px-3 py-2">Roll Number</th>
+                  <th className="px-3 py-2">Student Name</th>
+                  <th className="px-3 py-2">Program</th>
+                  <th className="px-3 py-2">Year</th>
+                  <th className="px-3 py-2">Email</th>
+                  <th className="px-3 py-2 text-right">Quick Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#182339]">
+                {demoAccounts.map((acc) => (
+                  <tr key={acc.roll} className="hover:bg-cyan-950/20">
+                    <td className="px-3 py-2 text-cyan-400 font-bold">{acc.roll}</td>
+                    <td className="px-3 py-2 text-gray-200">{acc.name}</td>
+                    <td className="px-3 py-2 text-gray-300">{acc.program} (Sec {acc.section || 'A'})</td>
+                    <td className="px-3 py-2 text-gray-400">Yr {acc.year}</td>
+                    <td className="px-3 py-2 text-gray-400">{acc.email}</td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        onClick={() => handleCopyRoll(acc.roll)}
+                        className="px-2.5 py-1 rounded text-[11px] bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/20 flex items-center space-x-1 ml-auto"
+                      >
+                        {copiedRoll === acc.roll ? (
+                          <>
+                            <Check className="w-3 h-3 text-emerald-400" />
+                            <span className="text-emerald-400">Copied!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3" />
+                            <span>Copy Roll</span>
+                          </>
+                        )}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* 4.5 Real-Request Verification Toolbar (Replaces old generator controls) */}
