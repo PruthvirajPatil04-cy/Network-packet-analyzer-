@@ -47,7 +47,7 @@ def _get_histogram(name: str, desc: str, buckets: tuple = ()):
         return REGISTRY._names_to_collectors.get(name, Histogram(f"{name}_{id(object())}", desc, buckets=buckets))
 
 from backend.models import (
-    PacketBatch, StatsResponse, AlertModel, HealthResponse
+    PacketBatch, PacketMetadata, StatsResponse, AlertModel, HealthResponse
 )
 from backend.stream import StreamManager
 from backend.antigravity.soc_server_agent import soc_server_agent
@@ -306,10 +306,14 @@ async def ingest_server_event(
     """
     Ingest decision event from student.college.edu demo server.
     Enriches suspicious requests (score >= 0.4) with Antigravity AI advice,
-    updates Prometheus metrics, and broadcasts to dashboard WebSocket subscribers.
+    updates Prometheus metrics, broadcasts to dashboard WebSocket subscribers,
+    and bridges requests to the L4 packet stream.
     """
+    global _last_agent_packet_time
     decision = event.get("decision", "allow")
     score = float(event.get("score", 0.0))
+    raw_ts = float(event.get("ts") or time.time())
+    _last_agent_packet_time = raw_ts
 
     # Metrics
     DEMO_SERVER_REQUESTS.labels(decision=decision).inc()
@@ -333,7 +337,7 @@ async def ingest_server_event(
 
     _server_events.append(event)
 
-    # Broadcast to live server WebSocket clients
+    # 1. Broadcast to live server WebSocket clients
     payload = json.dumps({"type": "server_decision", "data": event})
     stale_clients = []
     async with _server_ws_lock:
@@ -344,6 +348,57 @@ async def ingest_server_event(
                 stale_clients.append(ws)
         for ws in stale_clients:
             _server_ws_clients.discard(ws)
+
+    # 2. Bridge real student portal request into stream_manager as genuine L4 network frames
+    try:
+        from datetime import datetime
+        formatted_ts = datetime.fromtimestamp(raw_ts).strftime("%H:%M:%S.%f")[:-3]
+        src_ip = str(event.get("src_ip") or "127.0.0.1")
+        dst_host = str(event.get("dst") or "student.college.edu")
+        dst_ip = "127.0.0.1" if ("127.0.0.1" in dst_host or "localhost" in dst_host) else "10.0.0.14"
+        dst_port = 8001
+
+        bytes_in = int(event.get("bytes_in") or 300)
+        bytes_out = int(event.get("bytes_out") or 500)
+        total_size = max(bytes_in + bytes_out, 64)
+        flags = "PA" if decision == "allow" else ("RA" if decision == "block" else "A")
+
+        pkt = PacketMetadata(
+            timestamp=formatted_ts,
+            source=src_ip,
+            destination=dst_ip,
+            src_port=50000 + (abs(hash(src_ip)) % 10000),
+            dst_port=dst_port,
+            port=dst_port,
+            protocol="TCP",
+            size=total_size,
+            flags=flags,
+        )
+        batch = PacketBatch(
+            agent_id="student-portal-l7",
+            sent_at=raw_ts,
+            packets=[pkt],
+        )
+        await stream_manager.ingest_batch(batch)
+
+        # 3. If request was blocked or highly suspicious, generate SOC alert
+        if decision == "block" or score >= 0.7:
+            reasons_list = event.get("reasons") or ["Application security violation"]
+            alert_type = reasons_list[0] if reasons_list else "Application Threat"
+            alert = AlertModel(
+                id=f"alert-l7-{int(raw_ts * 1000)}",
+                time=formatted_ts,
+                type=alert_type,
+                ip=src_ip,
+                detail=f"Blocked {event.get('method', 'GET')} {event.get('path', '/')} on student portal. Threat score: {score:.2f}",
+                severity=event.get("severity", "HIGH"),
+                confidence=int(min(score * 100, 100)),
+                timestamp_ms=raw_ts * 1000,
+                recommendation=event.get("antigravity_action") or "Maintain firewall block on source IP.",
+            )
+            await stream_manager.record_alert(alert)
+    except Exception as exc:
+        logger.warning(f"Error bridging demo server event to packet stream: {exc}")
 
     return {"status": "broadcasted"}
 

@@ -9,7 +9,7 @@ import LiveServerTab from './components/LiveServerTab';
 import { Layers, Server } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('telemetry'); // 'telemetry' | 'liveserver'
+  const [activeTab, setActiveTab] = useState('liveserver'); // 'liveserver' | 'telemetry'
   const [isConnected, setIsConnected] = useState(false);
   const [activeClients, setActiveClients] = useState(1);
   const [packets, setPackets] = useState([]);
@@ -18,6 +18,7 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [isMetricsOpen, setIsMetricsOpen] = useState(false);
+  const [serverEventsCount, setServerEventsCount] = useState(0);
 
   const wsRef = useRef(null);
   const isPausedRef = useRef(isPaused);
@@ -133,19 +134,32 @@ export default function App() {
       } catch (e) {}
     };
 
+    const fetchServerEvents = async () => {
+      try {
+        const resp = await fetch('/api/server/live-events?limit=1');
+        if (resp.ok) {
+          const data = await resp.json();
+          if (isMounted) setServerEventsCount(data.count || 0);
+        }
+      } catch (e) {}
+    };
+
     fetchStats();
     fetchAlerts();
     fetchHealth();
+    fetchServerEvents();
 
     const statsInterval = setInterval(fetchStats, 1000);
     const alertsInterval = setInterval(fetchAlerts, 2000);
     const healthInterval = setInterval(fetchHealth, 5000);
+    const serverEventsInterval = setInterval(fetchServerEvents, 2000);
 
     return () => {
       isMounted = false;
       clearInterval(statsInterval);
       clearInterval(alertsInterval);
       clearInterval(healthInterval);
+      clearInterval(serverEventsInterval);
     };
   }, []);
 
@@ -163,18 +177,6 @@ export default function App() {
       <div className="border-b border-[#1b253b] bg-[#0d1424] px-6 py-2.5">
         <div className="max-w-[1600px] mx-auto flex items-center space-x-3 font-mono text-xs">
           <button
-            onClick={() => setActiveTab('telemetry')}
-            className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-lg transition-all ${
-              activeTab === 'telemetry'
-                ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/40 font-bold shadow-[0_0_10px_rgba(6,182,212,0.15)]'
-                : 'text-gray-400 hover:text-gray-200 border border-transparent'
-            }`}
-          >
-            <Layers className="w-4 h-4" />
-            <span>Network Telemetry (Raw Frames)</span>
-          </button>
-
-          <button
             onClick={() => setActiveTab('liveserver')}
             className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-lg transition-all ${
               activeTab === 'liveserver'
@@ -184,6 +186,28 @@ export default function App() {
           >
             <Server className="w-4 h-4" />
             <span>Live Server: student.college.edu (Threat Defense)</span>
+            {serverEventsCount > 0 && (
+              <span className="ml-1 px-1.5 py-0.2 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[10px]">
+                {serverEventsCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => setActiveTab('telemetry')}
+            className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-lg transition-all ${
+              activeTab === 'telemetry'
+                ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/40 font-bold shadow-[0_0_10px_rgba(6,182,212,0.15)]'
+                : 'text-gray-400 hover:text-gray-200 border border-transparent'
+            }`}
+          >
+            <Layers className="w-4 h-4" />
+            <span>Network Telemetry (Raw Frames)</span>
+            {(stats?.total_packets || packets.length) > 0 && (
+              <span className="ml-1 px-1.5 py-0.2 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 text-[10px]">
+                {stats?.total_packets || packets.length}
+              </span>
+            )}
           </button>
         </div>
       </div>

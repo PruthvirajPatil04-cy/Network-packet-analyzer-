@@ -123,3 +123,73 @@ async def test_post_and_get_alerts():
         assert get_resp.status_code == 200
         alerts = get_resp.json()
         assert any(a["id"] == "alert-test-1" for a in alerts)
+
+
+@pytest.mark.asyncio
+async def test_server_event_ingest_bridges_to_packet_stream():
+    """Verify that student portal events are bridged to the main L4 packet stream and alerts."""
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        # Ingest a real login event
+        login_event = {
+            "ts": 1700001000.0,
+            "src_ip": "10.0.0.42",
+            "dst": "student.college.edu",
+            "path": "/login",
+            "method": "POST",
+            "status": 303,
+            "decision": "allow",
+            "score": 0.0,
+            "reasons": [],
+            "severity": "LOW",
+            "bytes_in": 37,
+            "bytes_out": 0,
+        }
+        resp = await client.post(
+            "/api/server/event-ingest",
+            json=login_event,
+            headers={"X-API-Key": EXPECTED_API_KEY},
+        )
+        assert resp.status_code == 202
+
+        # Verify it reflected in packet stream statistics
+        stats_resp = await client.get("/api/stats?window_seconds=10")
+        assert stats_resp.status_code == 200
+        stats = stats_resp.json()
+        assert stats["total_packets"] >= 1
+        assert stats["protocol_distribution"]["TCP"] >= 1
+
+        # Verify it is returned in live-events
+        events_resp = await client.get("/api/server/live-events?limit=50")
+        assert events_resp.status_code == 200
+        events_data = events_resp.json()
+        assert any(e.get("path") == "/login" and e.get("src_ip") == "10.0.0.42" for e in events_data["events"])
+
+        # Ingest a blocked honeypot event
+        blocked_event = {
+            "ts": 1700001005.0,
+            "src_ip": "10.0.9.99",
+            "dst": "student.college.edu",
+            "path": "/admin",
+            "method": "GET",
+            "status": 403,
+            "decision": "block",
+            "score": 0.95,
+            "reasons": ["Administrative honeypot access"],
+            "severity": "CRITICAL",
+            "bytes_in": 0,
+            "bytes_out": 120,
+        }
+        b_resp = await client.post(
+            "/api/server/event-ingest",
+            json=blocked_event,
+            headers={"X-API-Key": EXPECTED_API_KEY},
+        )
+        assert b_resp.status_code == 202
+
+        # Verify an alert was generated and is accessible via /api/alerts
+        alerts_resp = await client.get("/api/alerts?limit=50")
+        assert alerts_resp.status_code == 200
+        all_alerts = alerts_resp.json()
+        assert any(a.get("ip") == "10.0.9.99" for a in all_alerts)
+

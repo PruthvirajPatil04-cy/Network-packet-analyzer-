@@ -4,7 +4,7 @@ import {
   Trash2, Plus, AlertTriangle, Sparkles, X, ChevronRight, Lock
 } from 'lucide-react';
 import {
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip
+  ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, Tooltip
 } from 'recharts';
 
 const DECISION_BADGES = {
@@ -37,6 +37,10 @@ export default function LiveServerTab() {
   const [manualIp, setManualIp] = useState('');
   const [manualReason, setManualReason] = useState('');
 
+  // Helper to generate a unique key for deduplicating live request events
+  const getEventKey = (item) =>
+    `${item.ts || ''}-${item.path || ''}-${item.method || ''}-${item.status || ''}-${item.src_ip || ''}`;
+
   // WebSocket for live server events emitted on real HTTP requests
   useEffect(() => {
     let ws = null;
@@ -51,17 +55,24 @@ export default function LiveServerTab() {
         ws.onmessage = (msg) => {
           try {
             const parsed = JSON.parse(msg.data);
-            if (parsed.type === 'server_decision') {
-              setEvents((prev) => [parsed.data, ...prev].slice(0, 200));
+            if (parsed.type === 'server_decision' && parsed.data) {
+              setEvents((prev) => {
+                const k = getEventKey(parsed.data);
+                if (prev.some((p) => getEventKey(p) === k)) return prev;
+                return [parsed.data, ...prev].slice(0, 200);
+              });
             }
           } catch (e) {}
         };
 
         ws.onclose = () => {
-          timer = setTimeout(connectWS, 3000);
+          timer = setTimeout(connectWS, 2000);
+        };
+        ws.onerror = () => {
+          if (ws) ws.close();
         };
       } catch (e) {
-        timer = setTimeout(connectWS, 3000);
+        timer = setTimeout(connectWS, 2000);
       }
     };
 
@@ -73,7 +84,7 @@ export default function LiveServerTab() {
     };
   }, []);
 
-  // Poll status, blocked list, attack summary, and initial live events
+  // Poll status, blocked list, attack summary, and live events
   const refreshData = async () => {
     try {
       const [sRes, bRes, aRes, eRes] = await Promise.all([
@@ -94,8 +105,13 @@ export default function LiveServerTab() {
       if (eRes.ok) {
         const eData = await eRes.json();
         const evList = Array.isArray(eData) ? eData : (eData.events || []);
-        // Seed initial history if local state is empty
-        setEvents((prev) => (prev.length === 0 ? [...evList].reverse() : prev));
+        setEvents((prev) => {
+          const serverReversed = [...evList].reverse();
+          if (prev.length === 0) return serverReversed;
+          const existing = new Set(prev.map(getEventKey));
+          const additions = serverReversed.filter((item) => !existing.has(getEventKey(item)));
+          return additions.length > 0 ? [...additions, ...prev].slice(0, 200) : prev;
+        });
       }
     } catch (e) {}
   };
@@ -301,7 +317,7 @@ export default function LiveServerTab() {
                     const timeStr = evt.ts ? new Date(evt.ts * 1000).toLocaleTimeString() : '—';
                     return (
                       <tr
-                        key={`${evt.ts}-${idx}`}
+                        key={`${evt.ts || idx}-${idx}`}
                         onClick={() => setSelectedEvent(evt)}
                         className={`hover:bg-cyan-950/20 cursor-pointer transition-colors ${
                           isBlock
@@ -312,21 +328,21 @@ export default function LiveServerTab() {
                         }`}
                       >
                         <td className="px-3.5 py-2 text-gray-400 text-[11px] whitespace-nowrap">{timeStr}</td>
-                        <td className="px-3.5 py-2 text-gray-200 font-medium whitespace-nowrap">{evt.src_ip}</td>
-                        <td className="px-3.5 py-2 text-gray-400 whitespace-nowrap">{evt.method}</td>
-                        <td className="px-3.5 py-2 text-cyan-300 whitespace-nowrap truncate max-w-[140px]">{evt.path}</td>
+                        <td className="px-3.5 py-2 text-gray-200 font-medium whitespace-nowrap">{evt.src_ip || '127.0.0.1'}</td>
+                        <td className="px-3.5 py-2 text-gray-400 whitespace-nowrap">{evt.method || 'GET'}</td>
+                        <td className="px-3.5 py-2 text-cyan-300 whitespace-nowrap truncate max-w-[140px]">{evt.path || '/'}</td>
                         <td className="px-3.5 py-2 whitespace-nowrap">
                           <span
                             className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase ${
                               DECISION_BADGES[evt.decision] || DECISION_BADGES.allow
                             }`}
                           >
-                            {evt.decision}
+                            {evt.decision || 'allow'}
                           </span>
                         </td>
                         <td className="px-3.5 py-2 font-bold whitespace-nowrap">
                           <span className={isBlock ? 'text-rose-400' : isThrottle ? 'text-amber-400' : 'text-gray-400'}>
-                            {evt.score !== undefined ? evt.score.toFixed(2) : '0.00'}
+                            {typeof evt.score === 'number' ? evt.score.toFixed(2) : '0.00'}
                           </span>
                         </td>
                         <td className="px-3.5 py-2 text-gray-300 text-[11px] truncate max-w-[200px]">
@@ -433,7 +449,7 @@ export default function LiveServerTab() {
                     />
                     <Bar dataKey="count" radius={[0, 4, 4, 0]}>
                       {chartData.map((entry, index) => (
-                        <cell key={`cell-${index}`} fill={entry.fill} />
+                        <Cell key={`cell-${index}`} fill={entry.fill} />
                       ))}
                     </Bar>
                   </BarChart>
