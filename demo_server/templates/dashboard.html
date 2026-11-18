@@ -55,7 +55,7 @@
     <div class="card">
       <h2>Welcome, {{ student.name }} ({{ student.roll }})</h2>
       <div class="student-meta">
-        {{ student.program }} · Year {{ student.year }} · Section {{ student.section }} · {{ student.email }}
+        {{ student.program }} · Year {{ student.year }} · Section {{ student.section }} · {{ student.email }} · Campus IP: <code style="color: #34d399; font-family: monospace;">{{ student.ip or '10.20.1.101' }}</code>
       </div>
 
       <div class="stat-grid">
@@ -73,6 +73,11 @@
             {{ student.fee_status }}
           </div>
         </div>
+        <div class="stat-box">
+          <div class="stat-label">Assigned Campus IP</div>
+          <div class="stat-value" style="font-size: 18px; color: #34d399; font-family: monospace;">{{ student.ip or '10.20.1.101' }}</div>
+        </div>
+      </div>
         <div class="stat-box">
           <div class="stat-label">Outstanding Due</div>
           <div class="stat-value {% if student.fee_due == 0 %}success{% else %}warning{% endif %}">

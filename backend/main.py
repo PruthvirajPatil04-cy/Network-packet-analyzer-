@@ -516,6 +516,7 @@ async def get_demo_accounts_proxy():
                 "year": s["year"],
                 "email": s["email"],
                 "section": s.get("section", "A"),
+                "ip": s.get("ip", "10.20.1.100"),
                 "enrolled_count": len(s.get("enrolled", [])),
             }
             for s in data

@@ -119,6 +119,24 @@ def get_deterministic_last_paid(student: Dict[str, Any]) -> str:
     month = 8 if student.get("year", 3) == 3 else 7
     return f"2025-{month:02d}-{day:02d}"
 
+
+def get_student_ip(roll: Optional[str]) -> Optional[str]:
+    """
+    Returns the distinct campus IP address assigned to each student.
+    Uses database record or derives a deterministic department subnet IP.
+    """
+    if not roll:
+        return None
+    student = STUDENT_DB.get(roll)
+    if student and student.get("ip"):
+        return student["ip"]
+    dept = roll[:2].upper()
+    dept_map = {"CS": 1, "EC": 2, "ME": 3, "EE": 4}
+    dept_id = dept_map.get(dept, 5)
+    digits = "".join(ch for ch in roll if ch.isdigit())
+    last_num = int(digits[-3:]) if len(digits) >= 3 else 100
+    return f"10.20.{dept_id}.{last_num}"
+
 # In-memory sliding history of events (last 500 decisions)
 _recent_events: deque[Dict[str, Any]] = deque(maxlen=500)
 _stats_lock = asyncio.Lock()
@@ -210,25 +228,45 @@ async def security_firewall_middleware(request: Request, call_next):
         request.client.host if request.client else "127.0.0.1"
     )
     src_ip = raw_ip.split(",")[0].strip() if "," in raw_ip else raw_ip.strip()
-    request.state.client_ip = src_ip
-
-    # Extract authenticated student identity from session JWT if present (Phase 1.2 & 3.3)
-    session_cookie = request.cookies.get("session")
-    jwt_payload = decode_session_jwt(session_cookie) if session_cookie else None
-    student_roll = jwt_payload.get("roll") if jwt_payload else None
-    request.state.student_roll = student_roll
-
-    method = request.method
-    dest_host = request.headers.get("host", "student.college.edu")
-    query_str = request.url.query
-    user_agent = request.headers.get("user-agent", "")
-    admin_token = request.headers.get("x-admin-token") or request.query_params.get("token")
 
     # Read body safely for inspection and cache in request.state.body
     body_bytes = await request.body()
     request.state.body = body_bytes
     body_str = body_bytes.decode("utf-8", errors="replace")
     bytes_in = len(body_bytes)
+
+    # Extract authenticated student identity from session JWT if present (Phase 1.2 & 3.3)
+    session_cookie = request.cookies.get("session")
+    jwt_payload = decode_session_jwt(session_cookie) if session_cookie else None
+    student_roll = jwt_payload.get("roll") if jwt_payload else None
+
+    # On login POST, extract roll from body if not yet in cookie
+    method = request.method
+    if not student_roll and path == "/login" and method == "POST":
+        try:
+            import urllib.parse
+            form_params = urllib.parse.parse_qs(body_str)
+            rolls = form_params.get("roll", [])
+            if rolls and rolls[0]:
+                student_roll = rolls[0].strip()
+        except Exception:
+            pass
+
+    request.state.student_roll = student_roll
+
+    # Assign distinct campus IP per student when connecting from local loopback (browser / demo desk)
+    is_loopback = src_ip in ("127.0.0.1", "::1", "localhost", "testclient")
+    if student_roll and (is_loopback or not request.headers.get("x-forwarded-for")):
+        student_ip = get_student_ip(student_roll)
+        if student_ip:
+            src_ip = student_ip
+
+    request.state.client_ip = src_ip
+
+    dest_host = request.headers.get("host", "student.college.edu")
+    query_str = request.url.query
+    user_agent = request.headers.get("user-agent", "")
+    admin_token = request.headers.get("x-admin-token") or request.query_params.get("token")
 
     # 1. FAST-PATH: Check if IP is already blocked
     is_blocked, block_entry = blocklist.is_blocked(src_ip)
@@ -708,38 +746,12 @@ async def get_demo_accounts():
             "year": s["year"],
             "email": s["email"],
             "section": s.get("section", "A"),
+            "ip": s.get("ip") or get_student_ip(s.get("roll")),
             "enrolled_count": len(s.get("enrolled", [])),
         }
         for s in STUDENT_DB.values()
     ]
     return {"accounts": roster, "count": len(roster)}
-
-    rows = "".join(
-        f"<tr><td><b>{c['code']}</b></td><td>{c['name']}</td><td>{c['credits']}</td><td>{c['instructor']}</td><td><button style='padding:4px 10px; font-size:11px;'>Enroll</button></td></tr>"
-        for c in courses
-    )
-    html = f"""
-    <!DOCTYPE html>
-    <html>
-      <head><title>Course Catalog</title>{PORTAL_BASE_STYLE}</head>
-      <body>
-        <header>
-          <div class="brand">🎓 Apex University <span class="badge">student.college.edu</span></div>
-          <div class="nav-links"><a href="/dashboard">Dashboard</a><a href="/courses">Courses</a><a href="/results">Results</a></div>
-        </header>
-        <div class="container">
-          <div class="card">
-            <h2>Course Catalog & Registration</h2>
-            <table>
-              <thead><tr><th>Course Code</th><th>Course Title</th><th>Credits</th><th>Instructor</th><th>Action</th></tr></thead>
-              <tbody>{rows}</tbody>
-            </table>
-          </div>
-        </div>
-      </body>
-    </html>
-    """
-    return HTMLResponse(content=html)
 
 
 @app.post("/courses/enroll")

@@ -321,7 +321,7 @@ export default function LiveServerTab() {
                   <option value="ALL">All Requests ({events.length})</option>
                   {demoAccounts.map((acc) => (
                     <option key={acc.roll} value={acc.roll}>
-                      {acc.roll} — {acc.name}
+                      {acc.roll} — {acc.name} ({acc.ip || '10.20.1.x'})
                     </option>
                   ))}
                 </select>
@@ -620,6 +620,7 @@ export default function LiveServerTab() {
                 <tr>
                   <th className="px-3 py-2">Roll Number</th>
                   <th className="px-3 py-2">Student Name</th>
+                  <th className="px-3 py-2">Campus IP</th>
                   <th className="px-3 py-2">Program</th>
                   <th className="px-3 py-2">Year</th>
                   <th className="px-3 py-2">Email</th>
@@ -631,6 +632,7 @@ export default function LiveServerTab() {
                   <tr key={acc.roll} className="hover:bg-cyan-950/20">
                     <td className="px-3 py-2 text-cyan-400 font-bold">{acc.roll}</td>
                     <td className="px-3 py-2 text-gray-200">{acc.name}</td>
+                    <td className="px-3 py-2 text-emerald-400 font-mono font-semibold text-[11px]">{acc.ip || '—'}</td>
                     <td className="px-3 py-2 text-gray-300">{acc.program} (Sec {acc.section || 'A'})</td>
                     <td className="px-3 py-2 text-gray-400">Yr {acc.year}</td>
                     <td className="px-3 py-2 text-gray-400">{acc.email}</td>

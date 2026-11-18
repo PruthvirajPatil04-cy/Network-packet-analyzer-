@@ -148,6 +148,7 @@ async def test_demo_accounts_endpoint_sanitized():
             assert "roll" in acc
             assert "name" in acc
             assert "email" in acc
+            assert "ip" in acc, f"Expected IP in demo-accounts for {acc.get('roll')}!"
             assert "password" not in acc, f"Plaintext password leaked in demo-accounts for {acc.get('roll')}!"
             assert "password_hash" not in acc, f"Password hash leaked in demo-accounts for {acc.get('roll')}!"
 
@@ -175,3 +176,46 @@ async def test_middleware_emits_tagged_event_with_student_roll():
             last_event = _recent_events[-1]
             assert last_event["path"] == "/dashboard"
             assert last_event["roll"] == "CS22B002", f"Expected roll=CS22B002 in event, got: {last_event.get('roll')}"
+
+
+@pytest.mark.asyncio
+async def test_each_student_has_distinct_ip_and_middleware_tags_distinct_ips():
+    """Requirement 8: Each of the 10 students has a distinct campus IP and requests from different students show different IPs."""
+    # 1. Database level: all 10 students have an assigned IP and all 10 are unique
+    assert len(STUDENT_DB) == 10
+    student_ips = [s.get("ip") for s in STUDENT_DB.values()]
+    assert all(ip is not None for ip in student_ips), "Every student must have an assigned IP"
+    assert len(set(student_ips)) == 10, f"Expected 10 distinct student IPs, got {len(set(student_ips))}: {student_ips}"
+
+    # 2. Middleware tagging: verify different students show different src_ip on loopback/browser connections
+    transport = httpx.ASGITransport(app=app)
+    student1 = STUDENT_DB["CS22B001"]
+    student2 = STUDENT_DB["CS22B002"]
+    token1 = create_session_jwt(student1)
+    token2 = create_session_jwt(student2)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://student.college.edu") as client:
+        # Request from student 1
+        client.cookies.set("session", token1)
+        r1 = await client.get("/dashboard", headers={"Accept": "application/json"})
+        assert r1.status_code == 200
+
+        async with _stats_lock:
+            event1 = _recent_events[-1]
+            assert event1["roll"] == "CS22B001"
+            assert event1["src_ip"] == student1["ip"]
+
+        # Request from student 2
+        client.cookies.set("session", token2)
+        r2 = await client.get("/dashboard", headers={"Accept": "application/json"})
+        assert r2.status_code == 200
+
+        async with _stats_lock:
+            event2 = _recent_events[-1]
+            assert event2["roll"] == "CS22B002"
+            assert event2["src_ip"] == student2["ip"]
+
+        # Assert IPs are strictly different
+        assert event1["src_ip"] != event2["src_ip"]
+        assert event1["src_ip"] == "10.20.1.101"
+        assert event2["src_ip"] == "10.20.1.102"
